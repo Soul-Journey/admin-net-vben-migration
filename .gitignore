@@ -41,3 +41,7 @@ node_modules/
 .idea
 .DS_Store
 /Admin.NET/Admin.NET.Web.Entry/Admin.NET.db-journal
+
+# Local development/runtime artifacts
+.run-logs/
+/vben-web/.runtime/
