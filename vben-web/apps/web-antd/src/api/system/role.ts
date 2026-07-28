@@ -106,8 +106,9 @@ function normalizeMenu(item: unknown): SysMenuTree {
     pid: toNumber(record.pid ?? record.Pid),
     tenantId: toNumber(record.tenantId ?? record.TenantId),
     title:
-      toStringValue(record.title ?? record.Title ?? record.name ?? record.Name) ??
-      '',
+      toStringValue(
+        record.title ?? record.Title ?? record.name ?? record.Name,
+      ) ?? '',
     type: toNumber(record.type ?? record.Type),
   };
 }
@@ -151,11 +152,13 @@ export function grantRoleDataScopeApi(params: GrantRoleDataScopeParams) {
   return requestClient.post<unknown>('/sysRole/grantDataScope', params);
 }
 
-export async function getMenuListApi(params: {
-  tenantId?: number;
-  title?: string;
-  type?: number;
-} = {}) {
+export async function getMenuListApi(
+  params: {
+    tenantId?: number;
+    title?: string;
+    type?: number;
+  } = {},
+) {
   const menus = await requestClient.get<unknown[]>('/sysMenu/list', {
     params: compactParams({
       TenantId: params.tenantId,

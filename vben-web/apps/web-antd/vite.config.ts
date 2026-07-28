@@ -1,4 +1,7 @@
+import process from 'node:process';
+
 import { defineConfig } from '@vben/vite-config';
+
 import { loadEnv } from 'vite';
 
 export default defineConfig(async ({ mode }) => {
@@ -15,6 +18,11 @@ export default defineConfig(async ({ mode }) => {
             changeOrigin: true,
             rewrite: (path) => path.replace(/^\/api/, ''),
             target: proxyTarget,
+            ws: true,
+          },
+          '/hubs': {
+            changeOrigin: true,
+            target: uploadTarget,
             ws: true,
           },
           '/upload': {

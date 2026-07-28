@@ -45,6 +45,20 @@ public class SysLogDiffService : IDynamicApiController, ITransient
     [DisplayName("获取差异日志详情")]
     public async Task<SysLogDiff> GetDetail(long id)
     {
-        return await _sysLogDiffRep.GetFirstAsync(u => u.Id == id);
+        var log = await _sysLogDiffRep.GetFirstAsync(u => u.Id == id) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+        return LogSanitizer.Sanitize(log);
+    }
+
+    /// <summary>
+    /// 清空差异日志
+    /// </summary>
+    [ApiDescriptionSettings(Name = "Clear"), HttpPost]
+    [DisplayName("清空差异日志")]
+    public async Task<int> Clear(LogInput? input = null)
+    {
+        if (!_userManager.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D3010);
+        if (input?.TenantId > 0)
+            return await _sysLogDiffRep.AsDeleteable().Where(u => u.TenantId == input.TenantId).ExecuteCommandAsync();
+        return await _sysLogDiffRep.AsDeleteable().ExecuteCommandAsync();
     }
 }

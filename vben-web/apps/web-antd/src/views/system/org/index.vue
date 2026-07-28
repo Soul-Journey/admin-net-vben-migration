@@ -96,10 +96,20 @@ const columns: TableColumnsType<SysOrgRecord> = [
 
 const formRules: Record<string, Rule[]> = {
   code: [
-    { message: '请输入机构编码', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入机构编码',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   name: [
-    { message: '请输入机构名称', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入机构名称',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
 };
 
@@ -111,7 +121,8 @@ const orgTypeOptions = computed(() =>
 );
 
 const isSuperAdmin = computed(
-  () => Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
+  () =>
+    Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
 );
 
 const tenantOptions = computed(() =>
@@ -153,7 +164,9 @@ function getStatusMeta(status?: number) {
 }
 
 function getOrgTypeLabel(type?: string) {
-  return orgTypeList.value.find((item) => item.value === type)?.label || type || '无';
+  return (
+    orgTypeList.value.find((item) => item.value === type)?.label || type || '无'
+  );
 }
 
 function getAllOrgKeys(items: SysOrgRecord[] = []): Array<number | string> {
@@ -167,7 +180,10 @@ function getRootOrgKeys(items: SysOrgRecord[] = []): Array<number | string> {
   return items.map((item) => item.id);
 }
 
-function filterOrgTree(items: SysOrgRecord[] = [], keyword = ''): SysOrgRecord[] {
+function filterOrgTree(
+  items: SysOrgRecord[] = [],
+  keyword = '',
+): SysOrgRecord[] {
   const normalizedKeyword = keyword.trim().toLowerCase();
   if (!normalizedKeyword) {
     return items;
@@ -286,7 +302,10 @@ async function loadOrgs(updateTree = false) {
       query.name || query.code || query.type
         ? getAllOrgKeys(data)
         : getRootOrgKeys(data);
-    if (updateTree || (query.id === 0 && !query.name && !query.code && !query.type)) {
+    if (
+      updateTree ||
+      (query.id === 0 && !query.name && !query.code && !query.type)
+    ) {
       orgTree.value = data;
       expandedTreeKeys.value = getRootOrgKeys(data);
     }
@@ -330,7 +349,10 @@ async function handleTreeSelect(keys: Array<number | string>) {
   await loadOrgs();
 }
 
-function findOrgById(items: SysOrgRecord[], id: number): SysOrgRecord | undefined {
+function findOrgById(
+  items: SysOrgRecord[],
+  id: number,
+): SysOrgRecord | undefined {
   for (const item of items) {
     if (item.id === id) {
       return item;
@@ -464,7 +486,11 @@ onMounted(async () => {
           placeholder="请选择租户"
           @change="handleTenantChange"
         />
-        <Input v-model:value="orgFilterText" allow-clear placeholder="机构名称 / 编码">
+        <Input
+          v-model:value="orgFilterText"
+          allow-clear
+          placeholder="机构名称 / 编码"
+        >
           <template #prefix>
             <IconifyIcon icon="lucide:search" />
           </template>
@@ -546,7 +572,11 @@ onMounted(async () => {
                   </template>
                   重置
                 </Button>
-                <Button v-if="can('sysOrg:add')" type="primary" @click="openCreateOrg">
+                <Button
+                  v-if="can('sysOrg:add')"
+                  type="primary"
+                  @click="openCreateOrg"
+                >
                   <template #icon>
                     <IconifyIcon icon="lucide:plus" />
                   </template>
@@ -575,7 +605,10 @@ onMounted(async () => {
             <template v-if="column.key === 'name'">
               <span class="org-name-cell">
                 <span class="tree-node-icon-wrap">
-                  <IconifyIcon :icon="getOrgIcon(asOrg(record).level)" class="tree-node-icon" />
+                  <IconifyIcon
+                    :icon="getOrgIcon(asOrg(record).level)"
+                    class="tree-node-icon"
+                  />
                 </span>
                 <span>{{ asOrg(record).name }}</span>
               </span>
@@ -603,13 +636,17 @@ onMounted(async () => {
                     size="small"
                   >
                     <Descriptions.Item label="创建者">
-                      <Tag>{{ getValueText(asOrg(record).createUserName) }}</Tag>
+                      <Tag>
+                        {{ getValueText(asOrg(record).createUserName) }}
+                      </Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="创建时间">
                       <Tag>{{ getValueText(asOrg(record).createTime) }}</Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="修改者">
-                      <Tag>{{ getValueText(asOrg(record).updateUserName) }}</Tag>
+                      <Tag>
+                        {{ getValueText(asOrg(record).updateUserName) }}
+                      </Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="修改时间">
                       <Tag>{{ getValueText(asOrg(record).updateTime) }}</Tag>
@@ -681,10 +718,15 @@ onMounted(async () => {
       :title="modalTitle"
       centered
       destroy-on-close
-      width="680"
+      :width="680"
       @cancel="formRef?.clearValidate()"
     >
-      <Form ref="formRef" :model="formState" :rules="formRules" layout="vertical">
+      <Form
+        ref="formRef"
+        :model="formState"
+        :rules="formRules"
+        layout="vertical"
+      >
         <Row :gutter="16">
           <Col :span="24">
             <Form.Item label="上级机构" name="pid">
@@ -709,7 +751,11 @@ onMounted(async () => {
           </Col>
           <Col :span="12">
             <Form.Item label="级别" name="level">
-              <InputNumber v-model:value="formState.level" class="w-full" :min="0" />
+              <InputNumber
+                v-model:value="formState.level"
+                class="w-full"
+                :min="0"
+              />
             </Form.Item>
           </Col>
           <Col :span="12">
@@ -724,7 +770,11 @@ onMounted(async () => {
           </Col>
           <Col :span="12">
             <Form.Item label="排序" name="orderNo">
-              <InputNumber v-model:value="formState.orderNo" class="w-full" :min="0" />
+              <InputNumber
+                v-model:value="formState.orderNo"
+                class="w-full"
+                :min="0"
+              />
             </Form.Item>
           </Col>
           <Col :span="12">
@@ -775,9 +825,9 @@ onMounted(async () => {
 .table-panel {
   min-width: 0;
   padding: 12px;
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border) / 72%);
   border-radius: 8px;
-  background: hsl(var(--background));
 }
 
 .panel-head {
@@ -788,15 +838,15 @@ onMounted(async () => {
 }
 
 .panel-title {
-  color: hsl(var(--foreground));
   font-size: 14px;
   font-weight: 650;
+  color: hsl(var(--foreground));
 }
 
 .panel-subtitle {
   margin-top: 2px;
-  color: hsl(var(--muted-foreground));
   font-size: 12px;
+  color: hsl(var(--muted-foreground));
 }
 
 .tree-tools {
@@ -813,24 +863,24 @@ onMounted(async () => {
 .tree-shell {
   min-height: 520px;
   padding: 6px;
-  border: 1px solid hsl(var(--border) / 70%);
-  border-radius: 8px;
   background:
     linear-gradient(180deg, hsl(var(--muted) / 25%), transparent 52px),
     hsl(var(--background));
+  border: 1px solid hsl(var(--border) / 70%);
+  border-radius: 8px;
 }
 
 .tree-shell.is-loading {
-  opacity: 0.62;
   pointer-events: none;
+  opacity: 0.62;
 }
 
 .tree-node,
 .org-name-cell {
   display: inline-flex;
-  min-width: 0;
-  align-items: center;
   gap: 8px;
+  align-items: center;
+  min-width: 0;
 }
 
 .tree-node {
@@ -842,14 +892,14 @@ onMounted(async () => {
 
 .tree-node-icon-wrap {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
   flex: none;
   align-items: center;
   justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border));
   border-radius: 6px;
-  background: hsl(var(--background));
 }
 
 .tree-node-icon {
@@ -866,9 +916,9 @@ onMounted(async () => {
 
 .query-head {
   display: flex;
+  gap: 12px;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
   margin-bottom: 10px;
 }
 
@@ -883,10 +933,10 @@ onMounted(async () => {
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  margin: 18px -20px -16px;
   padding: 12px 20px;
-  border-top: 1px solid hsl(var(--border) / 72%);
+  margin: 18px -20px -16px;
   background: hsl(var(--background));
+  border-top: 1px solid hsl(var(--border) / 72%);
 }
 
 :global(.org-record-popover .ant-popover-inner) {
@@ -924,8 +974,8 @@ onMounted(async () => {
 }
 
 :deep(.ant-tree .ant-tree-node-content-wrapper) {
-  min-width: 0;
   flex: 1;
+  min-width: 0;
   height: 32px;
   padding-inline: 5px 8px;
   border-radius: 8px;

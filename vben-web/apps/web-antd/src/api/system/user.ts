@@ -151,9 +151,7 @@ export function getUserRoleIdsApi(userId: number) {
 }
 
 export function getUserExtOrgsApi(userId: number) {
-  return requestClient.get<SysUserExtOrg[]>(
-    `/sysUser/ownExtOrgList/${userId}`,
-  );
+  return requestClient.get<SysUserExtOrg[]>(`/sysUser/ownExtOrgList/${userId}`);
 }
 
 function compactParams(params: RawRecord) {
@@ -201,13 +199,15 @@ function normalizeOrg(item: unknown): SysOrg {
   };
 }
 
-export async function getOrgListApi(params: {
-  code?: string;
-  id?: number;
-  name?: string;
-  tenantId?: number;
-  type?: string;
-} = {}) {
+export async function getOrgListApi(
+  params: {
+    code?: string;
+    id?: number;
+    name?: string;
+    tenantId?: number;
+    type?: string;
+  } = {},
+) {
   const orgs = await requestClient.get<unknown[]>('/sysOrg/list', {
     params: compactParams({
       Code: params.code,
@@ -220,11 +220,13 @@ export async function getOrgListApi(params: {
   return Array.isArray(orgs) ? orgs.map((item) => normalizeOrg(item)) : [];
 }
 
-export function getPosListApi(params: {
-  code?: string;
-  name?: string;
-  tenantId?: number;
-} = {}) {
+export function getPosListApi(
+  params: {
+    code?: string;
+    name?: string;
+    tenantId?: number;
+  } = {},
+) {
   return requestClient.get<SysPos[]>('/sysPos/list', {
     params: compactParams(params),
   });

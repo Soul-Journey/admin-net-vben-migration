@@ -8,7 +8,7 @@ import type {
 import { requestClient } from '#/api/request';
 
 function mapAdminNetUserInfo(raw: AdminNetUserInfoRaw): AdminNetUserInfo {
-  const roles = (raw.roleIds ?? []).map((role) => String(role));
+  const roles = (raw.roleIds ?? []).map(String);
   const accessCodes = raw.buttons ?? [];
 
   return {

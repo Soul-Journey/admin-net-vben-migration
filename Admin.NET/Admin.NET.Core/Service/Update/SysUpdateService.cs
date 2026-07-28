@@ -7,6 +7,7 @@
 using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace Admin.NET.Core.Service;
 
@@ -16,13 +17,55 @@ namespace Admin.NET.Core.Service;
 [ApiDescriptionSettings(Order = 390)]
 public class SysUpdateService : IDynamicApiController, ITransient
 {
+    private const long MaxArchiveSize = 2L * 1024 * 1024 * 1024;
+    private const int MaxArchiveEntries = 100_000;
+    private static readonly SemaphoreSlim OperationLock = new(1, 1);
+    private static readonly object LogSyncRoot = new();
     private readonly SysCacheService _sysCacheService;
     private readonly CDConfigOptions _cdConfigOptions;
+    private readonly UserManager _userManager;
 
-    public SysUpdateService(IOptions<CDConfigOptions> giteeOptions, SysCacheService sysCacheService)
+    public SysUpdateService(IOptions<CDConfigOptions> giteeOptions, SysCacheService sysCacheService, UserManager userManager)
     {
         _cdConfigOptions = giteeOptions.Value;
         _sysCacheService = sysCacheService;
+        _userManager = userManager;
+    }
+
+    /// <summary>
+    /// 获取不包含敏感值的更新配置状态
+    /// </summary>
+    [DisplayName("获取系统更新配置状态")]
+    public UpdateConfigurationStatusOutput GetConfigurationStatus()
+    {
+        EnsureSystemAdmin();
+
+        var outputConfigured = !string.IsNullOrWhiteSpace(_cdConfigOptions.BackendOutput);
+        var outputExists = outputConfigured && Directory.Exists(Path.GetFullPath(_cdConfigOptions.BackendOutput));
+        var repositoryConfigured = IsSafeRepositoryPart(_cdConfigOptions.Owner) && IsSafeRepositoryPart(_cdConfigOptions.Repo);
+        var publishConfigured = _cdConfigOptions.Publish != null
+            && !string.IsNullOrWhiteSpace(_cdConfigOptions.Publish.Configuration)
+            && !string.IsNullOrWhiteSpace(_cdConfigOptions.Publish.TargetFramework)
+            && !string.IsNullOrWhiteSpace(_cdConfigOptions.Publish.RuntimeIdentifier);
+        var accessTokenConfigured = !string.IsNullOrWhiteSpace(_cdConfigOptions.AccessToken)
+            && !_cdConfigOptions.AccessToken.StartsWith("xxx", StringComparison.OrdinalIgnoreCase);
+
+        return new UpdateConfigurationStatusOutput
+        {
+            Enabled = _cdConfigOptions.Enabled,
+            AccessTokenConfigured = accessTokenConfigured,
+            BackendOutputConfigured = outputConfigured,
+            BackendOutputExists = outputExists,
+            PublishConfigured = publishConfigured,
+            ReadyForUpdate = repositoryConfigured && accessTokenConfigured && outputExists && publishConfigured,
+            ReadyForRestore = outputExists,
+            Repository = repositoryConfigured ? $"{_cdConfigOptions.Owner}/{_cdConfigOptions.Repo}" : null,
+            Branch = _cdConfigOptions.Branch,
+            TargetFramework = _cdConfigOptions.Publish?.TargetFramework,
+            RuntimeIdentifier = _cdConfigOptions.Publish?.RuntimeIdentifier,
+            UpdateInterval = Math.Max(0, _cdConfigOptions.UpdateInterval),
+            BackupCount = Math.Max(0, _cdConfigOptions.BackupCount)
+        };
     }
 
     /// <summary>
@@ -33,9 +76,20 @@ public class SysUpdateService : IDynamicApiController, ITransient
     [ApiDescriptionSettings(Name = "List"), HttpPost]
     public Task<List<BackupOutput>> List()
     {
-        const string backendDir = "Admin.NET";
-        var rootPath = Path.GetFullPath(Path.Combine(_cdConfigOptions.BackendOutput, ".."));
-        return Task.FromResult(Directory.GetFiles(rootPath, backendDir + "*.zip", SearchOption.TopDirectoryOnly)
+        EnsureSystemAdmin();
+        return Task.FromResult(GetBackupList());
+    }
+
+    private List<BackupOutput> GetBackupList()
+    {
+        if (string.IsNullOrWhiteSpace(_cdConfigOptions.BackendOutput) || !IsSafeRepositoryPart(_cdConfigOptions.Repo))
+            return new List<BackupOutput>();
+
+        var outputPath = Path.GetFullPath(_cdConfigOptions.BackendOutput);
+        var rootPath = Directory.GetParent(outputPath)?.FullName;
+        if (string.IsNullOrWhiteSpace(rootPath) || !Directory.Exists(rootPath)) return new List<BackupOutput>();
+
+        return Directory.GetFiles(rootPath, _cdConfigOptions.Repo + "_*.zip", SearchOption.TopDirectoryOnly)
             .Select(filePath =>
             {
                 var file = new FileInfo(filePath);
@@ -47,7 +101,7 @@ public class SysUpdateService : IDynamicApiController, ITransient
                 };
             })
             .OrderByDescending(u => u.CreateTime)
-            .ToList());
+            .ToList();
     }
 
     /// <summary>
@@ -58,19 +112,24 @@ public class SysUpdateService : IDynamicApiController, ITransient
     [ApiDescriptionSettings(Name = "Restore"), HttpPost]
     public async Task Restore(RestoreInput input)
     {
-        // 检查参数
-        CheckConfig();
+        EnsureSystemAdmin();
+        CheckRestoreConfig();
+        if (!await OperationLock.WaitAsync(0)) throw Oops.Oh("已有更新或还原任务正在执行，请稍后再试");
         try
         {
-            var file = (await List()).FirstOrDefault(u => u.FileName.EqualIgnoreCase(input.FileName));
+            var fileName = Path.GetFileName(input.FileName);
+            if (!fileName.Equals(input.FileName, StringComparison.Ordinal)) throw Oops.Oh("备份文件名不合法");
+
+            var file = GetBackupList().FirstOrDefault(u => u.FileName.EqualIgnoreCase(fileName));
             if (file == null)
             {
                 PrintfLog("文件不存在...");
-                return;
+                throw Oops.Oh("备份文件不存在");
             }
 
             PrintfLog("正在还原...");
             using ZipArchive archive = new(File.OpenRead(file.FilePath), ZipArchiveMode.Read, leaveOpen: false);
+            ValidateArchive(archive, _cdConfigOptions.BackendOutput);
             archive.ExtractToDirectory(_cdConfigOptions.BackendOutput, true);
             PrintfLog("还原成功...");
         }
@@ -78,6 +137,10 @@ public class SysUpdateService : IDynamicApiController, ITransient
         {
             PrintfLog("发生异常：" + ex.Message);
             throw;
+        }
+        finally
+        {
+            OperationLock.Release();
         }
     }
 
@@ -89,6 +152,13 @@ public class SysUpdateService : IDynamicApiController, ITransient
     [ApiDescriptionSettings(Name = "Update"), HttpPost]
     public async Task Update()
     {
+        EnsureSystemAdmin();
+        await ExecuteUpdate(false);
+    }
+
+    private async Task ExecuteUpdate(bool ignoreInterval)
+    {
+        if (!await OperationLock.WaitAsync(0)) throw Oops.Oh("已有更新或还原任务正在执行，请稍后再试");
         var originColor = Console.ForegroundColor;
         Console.ForegroundColor = ConsoleColor.Yellow;
         Console.WriteLine($"【{DateTime.Now}】从远端仓库部署项目");
@@ -97,10 +167,10 @@ public class SysUpdateService : IDynamicApiController, ITransient
             PrintfLog("----------------------------从远端仓库部署项目-开始----------------------------");
 
             // 检查参数
-            CheckConfig();
+            CheckUpdateConfig();
 
             // 检查操作间隔
-            if (_cdConfigOptions.UpdateInterval > 0)
+            if (!ignoreInterval && _cdConfigOptions.UpdateInterval > 0)
             {
                 if (_sysCacheService.Get<bool>(CacheConst.KeySysUpdateInterval)) throw Oops.Oh("请勿频繁操作");
                 _sysCacheService.Set(CacheConst.KeySysUpdateInterval, true, TimeSpan.FromMinutes(_cdConfigOptions.UpdateInterval));
@@ -114,6 +184,7 @@ public class SysUpdateService : IDynamicApiController, ITransient
             // 获取解压后的根目录
             var rootPath = Path.GetFullPath(Path.Combine(_cdConfigOptions.BackendOutput, ".."));
             var tempDir = Path.Combine(rootPath, $"{_cdConfigOptions.Repo}-{_cdConfigOptions.Branch}");
+            EnsureWithinDirectory(rootPath, tempDir);
 
             PrintfLog("清理旧文件...");
             FileHelper.TryDelete(tempDir);
@@ -124,12 +195,14 @@ public class SysUpdateService : IDynamicApiController, ITransient
 
             PrintfLog("文件包解压...");
             using ZipArchive archive = new(stream, ZipArchiveMode.Read, leaveOpen: false);
+            ValidateArchive(archive, rootPath);
             archive.ExtractToDirectory(rootPath);
 
             // 项目目录
             var backendDir = "Admin.NET"; // 后端根目录
             var entryProjectName = "Admin.NET.Web.Entry"; // 启动项目目录
             var tempOutput = Path.Combine(rootPath, $"{_cdConfigOptions.Repo}_temp");
+            EnsureWithinDirectory(rootPath, tempOutput);
 
             PrintfLog("编译项目...");
             PrintfLog($"发布版本：{_cdConfigOptions.Publish.Configuration}");
@@ -152,8 +225,7 @@ public class SysUpdateService : IDynamicApiController, ITransient
             }
 
             PrintfLog("备份原项目文件...");
-            string backupPath = Path.Combine(rootPath, $"{_cdConfigOptions.Repo}_{DateTime.Now:yyyy_MM_dd}.zip");
-            if (File.Exists(backupPath)) File.Delete(backupPath);
+            string backupPath = Path.Combine(rootPath, $"{_cdConfigOptions.Repo}_{DateTime.Now:yyyy_MM_dd_HH_mm_ss}.zip");
             ZipFile.CreateFromDirectory(_cdConfigOptions.BackendOutput, backupPath);
 
             // 将临时文件移动到正式目录
@@ -165,7 +237,7 @@ public class SysUpdateService : IDynamicApiController, ITransient
 
             if (_cdConfigOptions.BackupCount > 0)
             {
-                var fileList = await List();
+                var fileList = GetBackupList();
                 if (fileList.Count > _cdConfigOptions.BackupCount)
                     PrintfLog("清除多余的备份文件...");
                 while (fileList.Count > _cdConfigOptions.BackupCount)
@@ -185,8 +257,15 @@ public class SysUpdateService : IDynamicApiController, ITransient
         }
         finally
         {
-            PrintfLog("----------------------------从远端仓库部署项目-结束----------------------------");
-            Console.ForegroundColor = originColor;
+            try
+            {
+                PrintfLog("----------------------------从远端仓库部署项目-结束----------------------------");
+                Console.ForegroundColor = originColor;
+            }
+            finally
+            {
+                OperationLock.Release();
+            }
         }
     }
 
@@ -200,6 +279,7 @@ public class SysUpdateService : IDynamicApiController, ITransient
     public async Task WebHook(Dictionary<string, object> input)
     {
         if (!_cdConfigOptions.Enabled) throw Oops.Oh("未启用持续部署功能");
+        CheckUpdateConfig();
         PrintfLog("----------------------------收到WebHook请求-开始----------------------------");
 
         try
@@ -213,18 +293,26 @@ public class SysUpdateService : IDynamicApiController, ITransient
             var token = input.GetValueOrDefault("sign")?.ToString();
             PrintfLog("User-Agent：" + ua);
             PrintfLog("Gitee-Event：" + even);
-            PrintfLog("Gitee-Token：" + token);
             PrintfLog("Gitee-Timestamp：" + timestamp);
 
             PrintfLog("开始验签...");
-            var secret = GetWebHookKey();
+            ValidateWebHookTimestamp(timestamp);
+            var secret = CreateWebHookKey();
             var stringToSign = $"{timestamp}\n{secret}";
             using var mac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
             var signData = mac.ComputeHash(Encoding.UTF8.GetBytes(stringToSign));
-            var encodedSignData = Convert.ToBase64String(signData);
-            var calculatedSignature = WebUtility.UrlEncode(encodedSignData);
+            var suppliedSignature = WebUtility.UrlDecode(token ?? string.Empty);
+            byte[] suppliedSignatureBytes;
+            try
+            {
+                suppliedSignatureBytes = Convert.FromBase64String(suppliedSignature);
+            }
+            catch (FormatException)
+            {
+                throw Oops.Oh("非法签名");
+            }
 
-            if (calculatedSignature != token) throw Oops.Oh("非法签名");
+            if (!CryptographicOperations.FixedTimeEquals(signData, suppliedSignatureBytes)) throw Oops.Oh("非法签名");
             PrintfLog("验签成功...");
 
             var hookName = input.GetValueOrDefault("hook_name") as string;
@@ -286,16 +374,7 @@ public class SysUpdateService : IDynamicApiController, ITransient
                     return;
             }
 
-            var updateInterval = _cdConfigOptions.UpdateInterval;
-            try
-            {
-                _cdConfigOptions.UpdateInterval = 0;
-                await Update();
-            }
-            finally
-            {
-                _cdConfigOptions.UpdateInterval = updateInterval;
-            }
+            await ExecuteUpdate(true);
         }
         finally
         {
@@ -311,8 +390,12 @@ public class SysUpdateService : IDynamicApiController, ITransient
     [ApiDescriptionSettings(Name = "WebHookKey"), HttpGet]
     public string GetWebHookKey()
     {
-        return CryptogramUtil.Encrypt(_cdConfigOptions.AccessToken);
+        EnsureSystemAdmin();
+        CheckUpdateConfig();
+        return CreateWebHookKey();
     }
+
+    private string CreateWebHookKey() => CryptogramUtil.Encrypt(_cdConfigOptions.AccessToken);
 
     /// <summary>
     /// 获取日志列表
@@ -322,7 +405,11 @@ public class SysUpdateService : IDynamicApiController, ITransient
     [ApiDescriptionSettings(Name = "Logs"), HttpGet]
     public List<string> LogList()
     {
-        return _sysCacheService.Get<List<string>>(CacheConst.KeySysUpdateLog) ?? new();
+        EnsureSystemAdmin();
+        lock (LogSyncRoot)
+        {
+            return (_sysCacheService.Get<List<string>>(CacheConst.KeySysUpdateLog) ?? new()).ToList();
+        }
     }
 
     /// <summary>
@@ -333,28 +420,34 @@ public class SysUpdateService : IDynamicApiController, ITransient
     [ApiDescriptionSettings(Name = "Clear"), HttpGet]
     public void ClearLog()
     {
-        _sysCacheService.Remove(CacheConst.KeySysUpdateLog);
+        EnsureSystemAdmin();
+        lock (LogSyncRoot)
+        {
+            _sysCacheService.Remove(CacheConst.KeySysUpdateLog);
+        }
     }
 
     /// <summary>
     /// 检查参数
     /// </summary>
     /// <returns></returns>
-    private void CheckConfig()
+    private void CheckUpdateConfig()
     {
         PrintfLog("检查CD配置参数...");
 
         if (_cdConfigOptions == null) throw Oops.Oh("CDConfig配置不能为空");
 
-        if (string.IsNullOrWhiteSpace(_cdConfigOptions.Owner)) throw Oops.Oh("仓库用户名不能为空");
+        if (!IsSafeRepositoryPart(_cdConfigOptions.Owner)) throw Oops.Oh("仓库用户名未配置或格式不正确");
 
-        if (string.IsNullOrWhiteSpace(_cdConfigOptions.Repo)) throw Oops.Oh("仓库名不能为空");
+        if (!IsSafeRepositoryPart(_cdConfigOptions.Repo)) throw Oops.Oh("仓库名未配置或格式不正确");
 
-        // if (string.IsNullOrWhiteSpace(_cdConfigOptions.Branch)) throw Oops.Oh("分支名不能为空");
+        if (string.IsNullOrWhiteSpace(_cdConfigOptions.Branch)) throw Oops.Oh("分支名不能为空");
 
         if (string.IsNullOrWhiteSpace(_cdConfigOptions.AccessToken)) throw Oops.Oh("授权信息不能为空");
 
         if (string.IsNullOrWhiteSpace(_cdConfigOptions.BackendOutput)) throw Oops.Oh("部署目录不能为空");
+
+        CheckRestoreConfig();
 
         if (_cdConfigOptions.Publish == null) throw Oops.Oh("编译配置不能为空");
 
@@ -365,21 +458,78 @@ public class SysUpdateService : IDynamicApiController, ITransient
         if (string.IsNullOrWhiteSpace(_cdConfigOptions.Publish.RuntimeIdentifier)) throw Oops.Oh("运行平台配置不能为空");
     }
 
+    private void CheckRestoreConfig()
+    {
+        if (string.IsNullOrWhiteSpace(_cdConfigOptions.BackendOutput)) throw Oops.Oh("部署目录不能为空");
+        var outputPath = Path.GetFullPath(_cdConfigOptions.BackendOutput);
+        if (!Directory.Exists(outputPath)) throw Oops.Oh("部署目录不存在");
+        if (Directory.GetParent(outputPath) == null) throw Oops.Oh("禁止将磁盘根目录作为部署目录");
+    }
+
+    private static bool IsSafeRepositoryPart(string value) =>
+        !string.IsNullOrWhiteSpace(value) && Regex.IsMatch(value, "^[A-Za-z0-9._-]+$");
+
+    private static void EnsureWithinDirectory(string rootPath, string targetPath)
+    {
+        var normalizedRoot = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var normalizedTarget = Path.GetFullPath(targetPath);
+        if (!normalizedTarget.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            throw Oops.Oh("更新文件路径超出允许目录");
+    }
+
+    private static void ValidateArchive(ZipArchive archive, string destinationPath)
+    {
+        if (archive.Entries.Count > MaxArchiveEntries) throw Oops.Oh("更新压缩包文件数量异常");
+
+        long totalLength = 0;
+        foreach (var entry in archive.Entries)
+        {
+            totalLength += entry.Length;
+            if (totalLength > MaxArchiveSize) throw Oops.Oh("更新压缩包解压后体积超过限制");
+
+            var entryPath = Path.GetFullPath(Path.Combine(destinationPath, entry.FullName));
+            EnsureWithinDirectory(destinationPath, entryPath);
+        }
+    }
+
+    private static void ValidateWebHookTimestamp(string timestamp)
+    {
+        if (!long.TryParse(timestamp, out var timestampValue)) throw Oops.Oh("WebHook时间戳无效");
+        var timestampMilliseconds = timestampValue > 10_000_000_000 ? timestampValue : timestampValue * 1000;
+        DateTimeOffset requestTime;
+        try
+        {
+            requestTime = DateTimeOffset.FromUnixTimeMilliseconds(timestampMilliseconds);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            throw Oops.Oh("WebHook时间戳无效");
+        }
+
+        if ((DateTimeOffset.UtcNow - requestTime).Duration() > TimeSpan.FromMinutes(5))
+            throw Oops.Oh("WebHook请求已过期");
+    }
+
+    private void EnsureSystemAdmin()
+    {
+        if (!_userManager.SuperAdmin && !_userManager.SysAdmin)
+            throw Oops.Oh("仅超级管理员或系统管理员可执行系统更新操作");
+    }
+
     /// <summary>
     /// 打印日志
     /// </summary>
     /// <param name="message"></param>
     private void PrintfLog(string message)
     {
-        var logList = _sysCacheService.Get<List<string>>(CacheConst.KeySysUpdateLog) ?? new();
-
-        var content = $"【{DateTime.Now}】 {message}";
-
-        Console.WriteLine(content);
-
-        logList.Add(content);
-
-        _sysCacheService.Set(CacheConst.KeySysUpdateLog, logList);
+        lock (LogSyncRoot)
+        {
+            var logList = _sysCacheService.Get<List<string>>(CacheConst.KeySysUpdateLog) ?? new();
+            var content = $"【{DateTime.Now}】 {message}";
+            Console.WriteLine(content);
+            logList.Add(content);
+            _sysCacheService.Set(CacheConst.KeySysUpdateLog, logList);
+        }
     }
 
     /// <summary>
@@ -405,14 +555,19 @@ public class SysUpdateService : IDynamicApiController, ITransient
 
         using var process = new Process();
         process.StartInfo = processStartInfo;
-        process.Start();
+        if (!process.Start()) throw Oops.Oh("无法启动发布命令");
 
-        while (!process.StandardOutput.EndOfStream)
+        var standardOutputTask = ReadProcessOutput(process.StandardOutput);
+        var standardErrorTask = ReadProcessOutput(process.StandardError);
+        await Task.WhenAll(standardOutputTask, standardErrorTask, process.WaitForExitAsync());
+        if (process.ExitCode != 0) throw Oops.Oh($"发布命令执行失败，退出码：{process.ExitCode}");
+    }
+
+    private async Task ReadProcessOutput(StreamReader reader)
+    {
+        while (await reader.ReadLineAsync() is { } line)
         {
-            string line = await process.StandardOutput.ReadLineAsync();
-            if (string.IsNullOrEmpty(line)) continue;
-            PrintfLog(line.Trim());
+            if (!string.IsNullOrWhiteSpace(line)) PrintfLog(line.Trim());
         }
-        await process.WaitForExitAsync();
     }
 }

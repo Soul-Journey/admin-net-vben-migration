@@ -9,32 +9,30 @@ namespace Admin.NET.Core;
 /// <summary>
 /// 数据库日志写入器
 /// </summary>
-public class DatabaseLoggingWriter : IDatabaseLoggingWriter, IDisposable
+public class DatabaseLoggingWriter : IDatabaseLoggingWriter
 {
-    private readonly IServiceScope _serviceScope;
-    private readonly ISqlSugarClient _db;
-    private readonly SysConfigService _sysConfigService; // 参数配置服务
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<DatabaseLoggingWriter> _logger; // 日志组件
 
-    public DatabaseLoggingWriter(IServiceScopeFactory scopeFactory)
+    public DatabaseLoggingWriter(IServiceScopeFactory scopeFactory, ILogger<DatabaseLoggingWriter> logger)
     {
-        _serviceScope = scopeFactory.CreateScope();
-        //_db = _serviceScope.ServiceProvider.GetRequiredService<ISqlSugarClient>();
-        _sysConfigService = _serviceScope.ServiceProvider.GetRequiredService<SysConfigService>();
-        _logger = _serviceScope.ServiceProvider.GetRequiredService<ILogger<DatabaseLoggingWriter>>();
-
-        // 切换日志独立数据库
-        _db = SqlSugarSetup.ITenant.IsAnyConnection(SqlSugarConst.LogConfigId)
-            ? SqlSugarSetup.ITenant.GetConnectionScope(SqlSugarConst.LogConfigId)
-            : SqlSugarSetup.ITenant.GetConnectionScope(SqlSugarConst.MainConfigId);
+        _scopeFactory = scopeFactory;
+        _logger = logger;
     }
 
     public async Task WriteAsync(LogMessage logMsg, bool flush)
     {
+        using var serviceScope = _scopeFactory.CreateScope();
+        var sysConfigService = serviceScope.ServiceProvider.GetRequiredService<SysConfigService>();
+        // DatabaseLoggingWriter 可能被并发调用，每次写入必须使用独立 SqlSugar/MySQL 连接。
+        var db = (SqlSugarSetup.ITenant.IsAnyConnection(SqlSugarConst.LogConfigId)
+            ? SqlSugarSetup.ITenant.GetConnectionScope(SqlSugarConst.LogConfigId)
+            : SqlSugarSetup.ITenant.GetConnectionScope(SqlSugarConst.MainConfigId)).CopyNew();
+
         var jsonStr = logMsg.Context?.Get("loggingMonitor")?.ToString();
         if (string.IsNullOrWhiteSpace(jsonStr))
         {
-            await _db.Insertable(new SysLogOp
+            await db.Insertable(new SysLogOp
             {
                 DisplayTitle = "自定义操作日志",
                 LogDateTime = logMsg.LogDateTime,
@@ -51,7 +49,7 @@ public class DatabaseLoggingWriter : IDatabaseLoggingWriter, IDisposable
 
         var loggingMonitor = JSON.Deserialize<dynamic>(jsonStr);
         // 记录数据校验日志
-        if (loggingMonitor.validation != null && !await _sysConfigService.GetConfigValue<bool>(ConfigConst.SysValidationLog)) return;
+        if (loggingMonitor.validation != null && !await sysConfigService.GetConfigValue<bool>(ConfigConst.SysValidationLog)) return;
 
         // 获取当前操作者
         string account = "", realName = "", userId = "", tenantId = "";
@@ -89,7 +87,7 @@ public class DatabaseLoggingWriter : IDatabaseLoggingWriter, IDisposable
             // 记录异常日志-发送邮件
             if (logMsg.Exception != null || loggingMonitor.exception != null)
             {
-                await _db.Insertable(new SysLogEx
+                await db.Insertable(new SysLogEx
                 {
                     ControllerName = loggingMonitor.controllerName,
                     ActionName = loggingMonitor.actionTypeName,
@@ -120,7 +118,7 @@ public class DatabaseLoggingWriter : IDatabaseLoggingWriter, IDisposable
                 }).ExecuteCommandAsync();
 
                 // 将异常日志发送到邮件
-                if (await _sysConfigService.GetConfigValue<bool>(ConfigConst.SysErrorMail))
+                if (await sysConfigService.GetConfigValue<bool>(ConfigConst.SysErrorMail))
                 {
                     await App.GetRequiredService<IEventPublisher>().PublishAsync(CommonConst.SendErrorMail, logMsg.Exception ?? loggingMonitor.exception);
                 }
@@ -131,7 +129,7 @@ public class DatabaseLoggingWriter : IDatabaseLoggingWriter, IDisposable
             // 记录访问日志-登录退出
             if (loggingMonitor.actionName == "userInfo" || loggingMonitor.actionName == "logout")
             {
-                await _db.Insertable(new SysLogVis
+                await db.Insertable(new SysLogVis
                 {
                     ControllerName = loggingMonitor.controllerName,
                     ActionName = loggingMonitor.actionTypeName,
@@ -155,8 +153,8 @@ public class DatabaseLoggingWriter : IDatabaseLoggingWriter, IDisposable
             }
 
             // 记录操作日志
-            if (!await _sysConfigService.GetConfigValue<bool>(ConfigConst.SysOpLog)) return;
-            await _db.Insertable(new SysLogOp
+            if (!await sysConfigService.GetConfigValue<bool>(ConfigConst.SysOpLog)) return;
+            await db.Insertable(new SysLogOp
             {
                 ControllerName = loggingMonitor.controllerName,
                 ActionName = loggingMonitor.actionTypeName,
@@ -194,11 +192,4 @@ public class DatabaseLoggingWriter : IDatabaseLoggingWriter, IDisposable
         }
     }
 
-    /// <summary>
-    /// 释放服务作用域
-    /// </summary>
-    public void Dispose()
-    {
-        _serviceScope.Dispose();
-    }
 }

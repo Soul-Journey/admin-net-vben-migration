@@ -16,16 +16,25 @@ namespace Admin.NET.Core.Service;
 public class SysOpenAccessService : IDynamicApiController, ITransient
 {
     private readonly SqlSugarRepository<SysOpenAccess> _sysOpenAccessRep;
+    private readonly SqlSugarRepository<SysTenant> _sysTenantRep;
+    private readonly SqlSugarRepository<SysUser> _sysUserRep;
     private readonly SysCacheService _sysCacheService;
+    private readonly UserManager _userManager;
 
     /// <summary>
     /// 开放接口身份服务构造函数
     /// </summary>
     public SysOpenAccessService(SqlSugarRepository<SysOpenAccess> sysOpenAccessRep,
-        SysCacheService sysCacheService)
+        SqlSugarRepository<SysTenant> sysTenantRep,
+        SqlSugarRepository<SysUser> sysUserRep,
+        SysCacheService sysCacheService,
+        UserManager userManager)
     {
         _sysOpenAccessRep = sysOpenAccessRep;
+        _sysTenantRep = sysTenantRep;
+        _sysUserRep = sysUserRep;
         _sysCacheService = sysCacheService;
+        _userManager = userManager;
     }
 
     /// <summary>
@@ -36,16 +45,8 @@ public class SysOpenAccessService : IDynamicApiController, ITransient
     [DisplayName("生成签名")]
     public string GenerateSignature(GenerateSignatureInput input)
     {
-        // 密钥
-        var appSecretByte = Encoding.UTF8.GetBytes(input.AccessSecret);
-
-        // 拼接参数
-        var parameter = $"{input.Method.ToString().ToUpper()}&{input.Url}&{input.AccessKey}&{input.Timestamp}&{input.Nonce}";
-        // 使用 HMAC-SHA256 协议创建基于哈希的消息身份验证代码 (HMAC)，以appSecretByte 作为密钥，对上面拼接的参数进行计算签名，所得签名进行 Base-64 编码
-        using HMAC hmac = new HMACSHA256();
-        hmac.Key = appSecretByte;
-        var sign = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(parameter)));
-        return sign;
+        EnsureSystemAdmin();
+        return GenerateSignatureCore(input.AccessKey, input.AccessSecret, input.Method, input.Url, input.Timestamp, input.Nonce);
     }
 
     /// <summary>
@@ -56,16 +57,48 @@ public class SysOpenAccessService : IDynamicApiController, ITransient
     [DisplayName("获取开放接口身份分页列表")]
     public async Task<SqlSugarPagedList<OpenAccessOutput>> Page(OpenAccessInput input)
     {
+        EnsureSystemAdmin();
         return await _sysOpenAccessRep.AsQueryable()
             .LeftJoin<SysUser>((u, a) => u.BindUserId == a.Id)
             .LeftJoin<SysTenant>((u, a, b) => u.BindTenantId == b.Id)
             .LeftJoin<SysOrg>((u, a, b, c) => b.OrgId == c.Id)
+            .WhereIF(!_userManager.SuperAdmin, (u, a, b, c) => u.BindTenantId == _userManager.TenantId)
             .WhereIF(!string.IsNullOrWhiteSpace(input.AccessKey?.Trim()), (u, a, b, c) => u.AccessKey.Contains(input.AccessKey))
             .Select((u, a, b, c) => new OpenAccessOutput
             {
                 BindUserAccount = a.Account,
                 BindTenantName = c.Name,
             }, true)
+            .ToPagedListAsync(input.Page, input.PageSize);
+    }
+
+    /// <summary>
+    /// 获取不包含密钥的开放接口身份分页列表
+    /// </summary>
+    [DisplayName("获取开放接口身份安全分页列表")]
+    public async Task<SqlSugarPagedList<OpenAccessSafeOutput>> PageSafe(OpenAccessInput input)
+    {
+        EnsureSystemAdmin();
+        return await _sysOpenAccessRep.AsQueryable()
+            .LeftJoin<SysUser>((u, a) => u.BindUserId == a.Id)
+            .LeftJoin<SysTenant>((u, a, b) => u.BindTenantId == b.Id)
+            .LeftJoin<SysOrg>((u, a, b, c) => b.OrgId == c.Id)
+            .WhereIF(!_userManager.SuperAdmin, (u, a, b, c) => u.BindTenantId == _userManager.TenantId)
+            .WhereIF(!string.IsNullOrWhiteSpace(input.AccessKey?.Trim()), (u, a, b, c) => u.AccessKey.Contains(input.AccessKey.Trim()))
+            .Select((u, a, b, c) => new OpenAccessSafeOutput
+            {
+                Id = u.Id,
+                AccessKey = u.AccessKey,
+                BindTenantId = u.BindTenantId,
+                BindUserId = u.BindUserId,
+                BindUserAccount = a.Account,
+                BindTenantName = c.Name,
+                CreateTime = u.CreateTime,
+                UpdateTime = u.UpdateTime,
+                CreateUserName = u.CreateUserName,
+                UpdateUserName = u.UpdateUserName,
+            })
+            .OrderByDescending(u => u.Id)
             .ToPagedListAsync(input.Page, input.PageSize);
     }
 
@@ -78,6 +111,7 @@ public class SysOpenAccessService : IDynamicApiController, ITransient
     [DisplayName("增加开放接口身份")]
     public async Task AddOpenAccess(AddOpenAccessInput input)
     {
+        await EnsureBindingAsync(input.BindTenantId, input.BindUserId);
         if (await _sysOpenAccessRep.AsQueryable().AnyAsync(u => u.AccessKey == input.AccessKey && u.Id != input.Id))
             throw Oops.Oh(ErrorCodeEnum.O1000);
 
@@ -94,13 +128,37 @@ public class SysOpenAccessService : IDynamicApiController, ITransient
     [DisplayName("更新开放接口身份")]
     public async Task UpdateOpenAccess(UpdateOpenAccessInput input)
     {
+        await EnsureBindingAsync(input.BindTenantId, input.BindUserId);
         if (await _sysOpenAccessRep.AsQueryable().AnyAsync(u => u.AccessKey == input.AccessKey && u.Id != input.Id))
             throw Oops.Oh(ErrorCodeEnum.O1000);
 
-        var openAccess = input.Adapt<SysOpenAccess>();
-        _sysCacheService.Remove(CacheConst.KeyOpenAccess + openAccess.AccessKey);
+        var existing = await GetManageableOpenAccessAsync(input.Id);
+        _sysCacheService.Remove(CacheConst.KeyOpenAccess + existing.AccessKey);
 
+        var openAccess = input.Adapt<SysOpenAccess>();
         await _sysOpenAccessRep.UpdateAsync(openAccess);
+        _sysCacheService.Remove(CacheConst.KeyOpenAccess + openAccess.AccessKey);
+    }
+
+    /// <summary>
+    /// 更新开放接口身份但保留原密钥
+    /// </summary>
+    [DisplayName("安全更新开放接口身份")]
+    public async Task UpdateSafe(UpdateOpenAccessSafeInput input)
+    {
+        await EnsureBindingAsync(input.BindTenantId, input.BindUserId);
+        if (await _sysOpenAccessRep.AsQueryable().AnyAsync(u => u.AccessKey == input.AccessKey && u.Id != input.Id))
+            throw Oops.Oh(ErrorCodeEnum.O1000);
+
+        var openAccess = await GetManageableOpenAccessAsync(input.Id);
+        var oldAccessKey = openAccess.AccessKey;
+        openAccess.AccessKey = input.AccessKey.Trim();
+        openAccess.BindTenantId = input.BindTenantId;
+        openAccess.BindUserId = input.BindUserId;
+        await _sysOpenAccessRep.UpdateAsync(openAccess);
+
+        _sysCacheService.Remove(CacheConst.KeyOpenAccess + oldAccessKey);
+        _sysCacheService.Remove(CacheConst.KeyOpenAccess + openAccess.AccessKey);
     }
 
     /// <summary>
@@ -112,9 +170,8 @@ public class SysOpenAccessService : IDynamicApiController, ITransient
     [DisplayName("删除开放接口身份")]
     public async Task DeleteOpenAccess(DeleteOpenAccessInput input)
     {
-        var openAccess = await _sysOpenAccessRep.GetFirstAsync(u => u.Id == input.Id);
-        if (openAccess != null)
-            _sysCacheService.Remove(CacheConst.KeyOpenAccess + openAccess.AccessKey);
+        var openAccess = await GetManageableOpenAccessAsync(input.Id);
+        _sysCacheService.Remove(CacheConst.KeyOpenAccess + openAccess.AccessKey);
 
         await _sysOpenAccessRep.DeleteAsync(u => u.Id == input.Id);
     }
@@ -126,7 +183,31 @@ public class SysOpenAccessService : IDynamicApiController, ITransient
     [DisplayName("创建密钥")]
     public async Task<string> CreateSecret()
     {
+        EnsureSystemAdmin();
         return await Task.FromResult(Convert.ToBase64String(Guid.NewGuid().ToByteArray())[..^2]);
+    }
+
+    /// <summary>
+    /// 轮换开放接口密钥，返回的新密钥只应展示一次
+    /// </summary>
+    [DisplayName("轮换开放接口密钥")]
+    public async Task<string> RotateSecret(BaseIdInput input)
+    {
+        var openAccess = await GetManageableOpenAccessAsync(input.Id);
+        openAccess.AccessSecret = Convert.ToBase64String(Guid.NewGuid().ToByteArray())[..^2];
+        await _sysOpenAccessRep.UpdateAsync(openAccess);
+        _sysCacheService.Remove(CacheConst.KeyOpenAccess + openAccess.AccessKey);
+        return openAccess.AccessSecret;
+    }
+
+    /// <summary>
+    /// 使用服务端保存的密钥生成签名，密钥不会返回浏览器
+    /// </summary>
+    [DisplayName("使用已保存密钥生成签名")]
+    public async Task<string> GenerateStoredSignature(GenerateStoredSignatureInput input)
+    {
+        var openAccess = await GetManageableOpenAccessAsync(input.Id);
+        return GenerateSignatureCore(openAccess.AccessKey, openAccess.AccessSecret, input.Method, input.Url, input.Timestamp, input.Nonce);
     }
 
     /// <summary>
@@ -191,5 +272,40 @@ public class SysOpenAccessService : IDynamicApiController, ITransient
                 return Task.CompletedTask;
             }
         };
+    }
+
+    private void EnsureSystemAdmin()
+    {
+        if (!_userManager.SuperAdmin && !_userManager.SysAdmin)
+            throw Oops.Oh("仅超级管理员或系统管理员可管理开放接口身份");
+    }
+
+    private async Task EnsureBindingAsync(long tenantId, long userId)
+    {
+        EnsureSystemAdmin();
+        if (!_userManager.SuperAdmin && tenantId != _userManager.TenantId)
+            throw Oops.Oh("系统管理员只能管理当前租户的开放接口身份");
+
+        if (!await _sysTenantRep.AsQueryable().ClearFilter().AnyAsync(u => u.Id == tenantId && !u.IsDelete))
+            throw Oops.Oh("绑定租户不存在或已删除");
+        if (!await _sysUserRep.AsQueryable().ClearFilter().AnyAsync(u => u.Id == userId && u.TenantId == tenantId && !u.IsDelete))
+            throw Oops.Oh("绑定用户不存在或不属于所选租户");
+    }
+
+    private async Task<SysOpenAccess> GetManageableOpenAccessAsync(long id)
+    {
+        EnsureSystemAdmin();
+        var openAccess = await _sysOpenAccessRep.GetFirstAsync(u => u.Id == id) ?? throw Oops.Oh("开放接口身份不存在");
+        if (!_userManager.SuperAdmin && openAccess.BindTenantId != _userManager.TenantId)
+            throw Oops.Oh("无权管理其他租户的开放接口身份");
+        return openAccess;
+    }
+
+    private static string GenerateSignatureCore(string accessKey, string accessSecret, HttpMethodEnum method, string url, long timestamp, string nonce)
+    {
+        var appSecretByte = Encoding.UTF8.GetBytes(accessSecret);
+        var parameter = $"{method.ToString().ToUpper()}&{url}&{accessKey}&{timestamp}&{nonce}";
+        using HMAC hmac = new HMACSHA256 { Key = appSecretByte };
+        return Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(parameter)));
     }
 }

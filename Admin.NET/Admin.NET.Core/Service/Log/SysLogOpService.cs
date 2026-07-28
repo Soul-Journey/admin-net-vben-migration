@@ -38,6 +38,8 @@ public class SysLogOpService : IDynamicApiController, ITransient
             .WhereIF(!string.IsNullOrWhiteSpace(input.ControllerName), u => u.ControllerName == input.ControllerName)
             .WhereIF(!string.IsNullOrWhiteSpace(input.ActionName), u => u.ActionName == input.ActionName)
             .WhereIF(!string.IsNullOrWhiteSpace(input.Elapsed.ToString()), u => u.Elapsed >= input.Elapsed)
+            .WhereIF(input.Status == "200", u => u.Status == "200")
+            .WhereIF(!string.IsNullOrWhiteSpace(input.Status) && input.Status != "200", u => u.Status != "200")
             //.OrderBy(u => u.CreateTime, OrderByType.Desc)
             .IgnoreColumns(u => new { u.RequestParam, u.ReturnResult, u.Message })
             .OrderBuilder(input)
@@ -52,7 +54,8 @@ public class SysLogOpService : IDynamicApiController, ITransient
     [DisplayName("获取操作日志详情")]
     public async Task<SysLogOp> GetDetail(long id)
     {
-        return await _sysLogOpRep.GetFirstAsync(u => u.Id == id);
+        var log = await _sysLogOpRep.GetFirstAsync(u => u.Id == id) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+        return LogSanitizer.Sanitize(log);
     }
 
     /// <summary>
@@ -61,9 +64,12 @@ public class SysLogOpService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Clear"), HttpPost]
     [DisplayName("清空操作日志")]
-    public void Clear()
+    public async Task<int> Clear(LogInput? input = null)
     {
-        _sysLogOpRep.AsSugarClient().DbMaintenance.TruncateTable<SysLogOp>();
+        if (!_userManager.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D3010);
+        if (input?.TenantId > 0)
+            return await _sysLogOpRep.AsDeleteable().Where(u => u.TenantId == input.TenantId).ExecuteCommandAsync();
+        return await _sysLogOpRep.AsDeleteable().ExecuteCommandAsync();
     }
 
     /// <summary>
@@ -75,6 +81,7 @@ public class SysLogOpService : IDynamicApiController, ITransient
     public async Task<IActionResult> ExportLogOp(LogInput input)
     {
         var logOpList = await _sysLogOpRep.AsQueryable()
+            .WhereIF(_userManager.SuperAdmin && input.TenantId > 0, u => u.TenantId == input.TenantId)
             .WhereIF(!string.IsNullOrWhiteSpace(input.StartTime.ToString()) && !string.IsNullOrWhiteSpace(input.EndTime.ToString()),
                     u => u.CreateTime >= input.StartTime && u.CreateTime <= input.EndTime)
             .OrderBy(u => u.CreateTime, OrderByType.Desc)

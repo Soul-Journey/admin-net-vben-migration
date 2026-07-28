@@ -23,3 +23,17 @@ public class PageOnlineUserInput : BasePageInput
     /// </summary>
     public long TenantId { get; set; }
 }
+
+public class ForceOfflineOnlineUserInput
+{
+    /// <summary>
+    /// SignalR 连接Id
+    /// </summary>
+    [Required]
+    public string ConnectionId { get; set; }
+
+    /// <summary>
+    /// 发起操作的当前 SignalR 连接Id
+    /// </summary>
+    public string? CurrentConnectionId { get; set; }
+}

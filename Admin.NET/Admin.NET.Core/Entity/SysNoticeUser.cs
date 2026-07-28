@@ -10,6 +10,7 @@ namespace Admin.NET.Core;
 /// 系统通知公告用户表
 /// </summary>
 [SugarTable(null, "系统通知公告用户表")]
+[SugarIndex("index_{table}_NU", nameof(NoticeId), OrderByType.Asc, nameof(UserId), OrderByType.Asc, true)]
 [SysTable]
 public partial class SysNoticeUser : EntityBaseId
 {

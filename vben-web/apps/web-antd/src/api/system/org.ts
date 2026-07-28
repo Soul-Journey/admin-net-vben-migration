@@ -85,7 +85,9 @@ function normalizeOrg(item: unknown): SysOrgRecord {
     children: normalizedChildren,
     code: toStringValue(record.code ?? record.Code),
     createTime: toStringValue(record.createTime ?? record.CreateTime),
-    createUserName: toStringValue(record.createUserName ?? record.CreateUserName),
+    createUserName: toStringValue(
+      record.createUserName ?? record.CreateUserName,
+    ),
     directorId: toNumber(record.directorId ?? record.DirectorId),
     disabled: toBoolean(record.disabled ?? record.Disabled),
     id: toNumber(record.id ?? record.Id) ?? 0,
@@ -98,7 +100,9 @@ function normalizeOrg(item: unknown): SysOrgRecord {
     tenantId: toNumber(record.tenantId ?? record.TenantId),
     type: toStringValue(record.type ?? record.Type),
     updateTime: toStringValue(record.updateTime ?? record.UpdateTime),
-    updateUserName: toStringValue(record.updateUserName ?? record.UpdateUserName),
+    updateUserName: toStringValue(
+      record.updateUserName ?? record.UpdateUserName,
+    ),
   };
 }
 

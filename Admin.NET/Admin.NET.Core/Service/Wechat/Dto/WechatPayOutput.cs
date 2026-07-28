@@ -52,3 +52,24 @@ public class WechatPayParaOutput
 
     public string PaySign { get; set; }
 }
+
+public class WechatPayConfigurationStatus
+{
+    public bool AppIdConfigured { get; set; }
+    public bool MerchantIdConfigured { get; set; }
+    public bool MerchantV3SecretConfigured { get; set; }
+    public bool CertificateSerialNumberConfigured { get; set; }
+    public bool CertificateFileConfigured { get; set; }
+    public bool PayCallbackConfigured { get; set; }
+    public bool RefundCallbackConfigured { get; set; }
+
+    public bool ReadyForPayment => AppIdConfigured
+        && MerchantIdConfigured
+        && MerchantV3SecretConfigured
+        && CertificateSerialNumberConfigured
+        && CertificateFileConfigured;
+
+    public bool ReadyForRefund => ReadyForPayment
+        && PayCallbackConfigured
+        && RefundCallbackConfigured;
+}

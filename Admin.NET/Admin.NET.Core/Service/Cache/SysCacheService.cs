@@ -51,6 +51,7 @@ public class SysCacheService : IDynamicApiController, ISingleton
     [DisplayName("获取缓存键名集合")]
     public List<string> GetKeyList()
     {
+        EnsureSystemAdmin();
         return _cacheProvider.Cache == Cache.Default
             ? _cacheProvider.Cache.Keys.Where(u => u.StartsWith(_cacheOptions.Prefix)).Select(u => u[_cacheOptions.Prefix.Length..]).OrderBy(u => u).ToList()
             : ((FullRedis)_cacheProvider.Cache).Search($"{_cacheOptions.Prefix}*", int.MaxValue).Select(u => u[_cacheOptions.Prefix.Length..]).OrderBy(u => u).ToList();
@@ -176,11 +177,19 @@ public class SysCacheService : IDynamicApiController, ISingleton
     /// </summary>
     /// <param name="key"></param>
     /// <returns></returns>
-    [ApiDescriptionSettings(Name = "Delete"), HttpPost]
-    [DisplayName("删除缓存")]
+    [NonAction]
     public int Remove(string key)
     {
         return _cacheProvider.Cache.Remove($"{_cacheOptions.Prefix}{key}");
+    }
+
+    [ApiDescriptionSettings(Name = "Delete"), HttpPost]
+    [DisplayName("删除缓存")]
+    public int Delete(string key)
+    {
+        EnsureSystemAdmin();
+        if (string.IsNullOrWhiteSpace(key)) throw Oops.Oh("缓存键不能为空");
+        return Remove(key);
     }
 
     /// <summary>
@@ -191,9 +200,12 @@ public class SysCacheService : IDynamicApiController, ISingleton
     [ApiDescriptionSettings(Name = "Clear"), HttpPost]
     public void Clear()
     {
-        _cacheProvider.Cache.Clear();
-
-        Cache.Default.Clear();
+        EnsureSystemAdmin();
+        var keys = _cacheProvider.Cache == Cache.Default
+            ? _cacheProvider.Cache.Keys.Where(u => u.StartsWith(_cacheOptions.Prefix)).ToArray()
+            : ((FullRedis)_cacheProvider.Cache).Search($"{_cacheOptions.Prefix}*", int.MaxValue).ToArray();
+        if (keys.Length > 0) _cacheProvider.Cache.Remove(keys);
+        if (_cacheProvider.Cache != Cache.Default) Cache.Default.Clear();
     }
 
     /// <summary>
@@ -212,8 +224,7 @@ public class SysCacheService : IDynamicApiController, ISingleton
     /// </summary>
     /// <param name="prefixKey">键名前缀</param>
     /// <returns></returns>
-    [ApiDescriptionSettings(Name = "DeleteByPreKey"), HttpPost]
-    [DisplayName("根据键名前缀删除缓存")]
+    [NonAction]
     public int RemoveByPrefixKey(string prefixKey)
     {
         var delKeys = _cacheProvider.Cache == Cache.Default
@@ -222,12 +233,21 @@ public class SysCacheService : IDynamicApiController, ISingleton
         return _cacheProvider.Cache.Remove(delKeys);
     }
 
+    [ApiDescriptionSettings(Name = "DeleteByPreKey"), HttpPost]
+    [DisplayName("根据键名前缀删除缓存")]
+    public int DeleteByPrefixKey(string prefixKey)
+    {
+        EnsureSystemAdmin();
+        if (string.IsNullOrWhiteSpace(prefixKey)) throw Oops.Oh("缓存前缀不能为空");
+        return RemoveByPrefixKey(prefixKey);
+    }
+
     /// <summary>
     /// 根据键名前缀获取键名集合 🔖
     /// </summary>
     /// <param name="prefixKey">键名前缀</param>
     /// <returns></returns>
-    [DisplayName("根据键名前缀获取键名集合")]
+    [NonAction]
     public List<string> GetKeysByPrefixKey(string prefixKey)
     {
         return _cacheProvider.Cache == Cache.Default
@@ -243,6 +263,10 @@ public class SysCacheService : IDynamicApiController, ISingleton
     [DisplayName("获取缓存值")]
     public object GetValue(string key)
     {
+        EnsureSystemAdmin();
+        if (string.IsNullOrWhiteSpace(key)) throw Oops.Oh("缓存键不能为空");
+        if (IsSensitiveCacheKey(key))
+            return "******（敏感缓存值已隐藏）";
         // 若Key经过URL编码则进行解码
         if (Regex.IsMatch(key, @"%[0-9a-fA-F]{2}"))
             key = HttpUtility.UrlDecode(key);
@@ -250,6 +274,23 @@ public class SysCacheService : IDynamicApiController, ISingleton
         return _cacheProvider.Cache == Cache.Default
             ? _cacheProvider.Cache.Get<object>($"{_cacheOptions.Prefix}{key}")
             : _cacheProvider.Cache.Get<string>($"{_cacheOptions.Prefix}{key}");
+    }
+
+    [NonAction]
+    private void EnsureSystemAdmin()
+    {
+        var accountType = App.HttpContext?.User.FindFirst(ClaimConst.AccountType)?.Value;
+        if (accountType != ((int)AccountTypeEnum.SuperAdmin).ToString()
+            && accountType != ((int)AccountTypeEnum.SysAdmin).ToString())
+            throw Oops.Oh("仅超级管理员或系统管理员可操作");
+    }
+
+    [NonAction]
+    private static bool IsSensitiveCacheKey(string key)
+    {
+        if (Regex.IsMatch(key, "password|secret|private.?key", RegexOptions.IgnoreCase)) return true;
+        return key.Contains("token", StringComparison.OrdinalIgnoreCase)
+            && !key.EndsWith("token_expire", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

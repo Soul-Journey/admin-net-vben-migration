@@ -2,11 +2,7 @@
 import type { FormInstance, TableColumnsType, TreeProps } from 'ant-design-vue';
 import type { Rule } from 'ant-design-vue/es/form';
 
-import type {
-  SaveMenuParams,
-  SysMenuRecord,
-  SysTenantOption,
-} from '#/api';
+import type { SaveMenuParams, SysMenuRecord, SysTenantOption } from '#/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
 
@@ -23,6 +19,7 @@ import {
   InputNumber,
   message,
   Modal,
+  Popover,
   Radio,
   Row,
   Select,
@@ -112,6 +109,27 @@ const columns: TableColumnsType<SysMenuRecord> = [
 ];
 
 const formRules: Record<string, Rule[]> = {
+  outLink: [
+    {
+      validator: async (_rule, value) => {
+        const link = String(value || '').trim();
+        if (!link && !formState.isIframe) return;
+        if (!link) throw new Error('内嵌页面必须填写链接地址');
+        try {
+          const url = new URL(link);
+          if (
+            !['http:', 'https:'].includes(url.protocol) ||
+            url.username ||
+            url.password
+          ) {
+            throw new Error('unsupported link');
+          }
+        } catch {
+          throw new Error('请输入不含账号密码的 http/https 完整地址');
+        }
+      },
+    },
+  ],
   permission: [
     {
       validator: async (_rule, value) => {
@@ -128,10 +146,20 @@ const formRules: Record<string, Rule[]> = {
     },
   ],
   title: [
-    { message: '请输入菜单名称', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入菜单名称',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   type: [
-    { message: '请选择菜单类型', required: true, trigger: 'change', type: 'number' },
+    {
+      message: '请选择菜单类型',
+      required: true,
+      trigger: 'change',
+      type: 'number',
+    },
   ],
 };
 
@@ -143,7 +171,8 @@ const tenantOptions = computed(() =>
 );
 
 const isSuperAdmin = computed(
-  () => Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
+  () =>
+    Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
 );
 
 const isRouteMenu = computed(
@@ -476,7 +505,11 @@ onMounted(async () => {
               </template>
               重置
             </Button>
-            <Button v-if="can('sysMenu:add')" type="primary" @click="openCreateMenu">
+            <Button
+              v-if="can('sysMenu:add')"
+              type="primary"
+              @click="openCreateMenu"
+            >
               <template #icon>
                 <IconifyIcon icon="lucide:plus" />
               </template>
@@ -550,8 +583,12 @@ onMounted(async () => {
             </Tag>
           </template>
           <template v-else-if="column.key === 'modifyRecord'">
-            <Tooltip placement="left">
-              <template #title>
+            <Popover
+              overlay-class-name="menu-record-popover"
+              placement="bottom"
+              trigger="hover"
+            >
+              <template #content>
                 <Descriptions
                   :column="2"
                   bordered
@@ -582,7 +619,7 @@ onMounted(async () => {
                 </template>
                 详情
               </Button>
-            </Tooltip>
+            </Popover>
           </template>
           <template v-else-if="column.key === 'actions'">
             <Space :size="4" wrap>
@@ -631,17 +668,21 @@ onMounted(async () => {
 
     <Modal
       v-model:open="modalOpen"
-      :body-style="{ maxHeight: '70vh', overflowY: 'auto', padding: '16px 20px' }"
-      :footer="null"
+      :body-style="{
+        maxHeight: 'calc(100dvh - 190px)',
+        overflowY: 'auto',
+        padding: '14px 18px',
+      }"
       :mask-closable="false"
       :title="modalTitle"
       centered
       destroy-on-close
-      width="760"
+      :width="720"
       @cancel="menuFormRef?.clearValidate()"
     >
       <Form
         ref="menuFormRef"
+        class="menu-editor-form"
         :model="formState"
         :rules="formRules"
         layout="vertical"
@@ -718,7 +759,7 @@ onMounted(async () => {
               <Input
                 v-model:value="formState.outLink"
                 allow-clear
-                placeholder="外链或内嵌页面地址"
+                placeholder="例如 https://docs.example.com"
               />
             </Form.Item>
           </Col>
@@ -742,7 +783,10 @@ onMounted(async () => {
           </Col>
           <Col :span="12">
             <Form.Item label="状态" name="status">
-              <Radio.Group v-model:value="formState.status" :options="statusOptions" />
+              <Radio.Group
+                v-model:value="formState.status"
+                :options="statusOptions"
+              />
             </Form.Item>
           </Col>
         </Row>
@@ -775,14 +819,14 @@ onMounted(async () => {
         </Form.Item>
       </Form>
 
-      <div class="modal-footer">
+      <template #footer>
         <Space>
           <Button @click="modalOpen = false">取消</Button>
           <Button :loading="submitLoading" type="primary" @click="submitMenu">
             确定
           </Button>
         </Space>
-      </div>
+      </template>
     </Modal>
   </div>
 </template>
@@ -790,18 +834,18 @@ onMounted(async () => {
 <style scoped>
 .menu-page {
   display: flex;
-  min-height: 100%;
   flex-direction: column;
   gap: 12px;
+  min-height: 100%;
   padding: 12px;
   background: hsl(var(--muted) / 35%);
 }
 
 .query-panel,
 .table-panel {
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border) / 72%);
   border-radius: 8px;
-  background: hsl(var(--background));
 }
 
 .query-panel {
@@ -824,41 +868,41 @@ onMounted(async () => {
 
 .table-tools {
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
   margin-bottom: 10px;
 }
 
 .table-title {
-  color: hsl(var(--foreground));
   font-size: 14px;
   font-weight: 650;
+  color: hsl(var(--foreground));
 }
 
 .table-subtitle {
   margin-top: 2px;
-  color: hsl(var(--muted-foreground));
   font-size: 12px;
+  color: hsl(var(--muted-foreground));
 }
 
 .menu-title-cell {
   display: inline-flex;
-  min-width: 0;
-  align-items: center;
   gap: 8px;
+  align-items: center;
+  min-width: 0;
 }
 
 .menu-icon-wrap {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
   flex: none;
   align-items: center;
   justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border));
   border-radius: 6px;
-  background: hsl(var(--background));
 }
 
 .menu-icon {
@@ -877,6 +921,23 @@ onMounted(async () => {
   width: 360px;
 }
 
+:global(.menu-record-popover .ant-popover-inner) {
+  padding: 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  box-shadow:
+    0 12px 28px rgb(15 23 42 / 12%),
+    0 2px 8px rgb(15 23 42 / 8%);
+}
+
+:global(.menu-record-popover .ant-popover-inner-content) {
+  padding: 0;
+}
+
+:global(.menu-record-popover) {
+  z-index: 1060;
+}
+
 .switch-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -886,32 +947,31 @@ onMounted(async () => {
 
 .switch-item {
   display: flex;
-  min-height: 44px;
+  gap: 10px;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  min-height: 44px;
   padding: 0 12px;
-  border: 1px solid hsl(var(--border) / 72%);
-  border-radius: 8px;
-  background: hsl(var(--muted) / 22%);
-  color: hsl(var(--foreground));
   font-size: 13px;
   font-weight: 500;
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted) / 22%);
+  border: 1px solid hsl(var(--border) / 72%);
+  border-radius: 8px;
 }
 
 .icon-option {
   display: inline-flex;
-  align-items: center;
   gap: 8px;
+  align-items: center;
 }
 
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  margin: 18px -20px -16px;
-  padding: 12px 20px;
-  border-top: 1px solid hsl(var(--border) / 72%);
-  background: hsl(var(--background));
+:global(.ant-modal:has(.menu-editor-form)) {
+  max-width: calc(100vw - 32px);
+}
+
+.menu-editor-form :deep(.ant-form-item) {
+  margin-bottom: 12px;
 }
 
 :deep(.ant-form-inline .ant-form-item) {
@@ -933,8 +993,8 @@ onMounted(async () => {
   }
 
   .table-tools {
-    align-items: flex-start;
     flex-direction: column;
+    align-items: flex-start;
   }
 
   .switch-grid {

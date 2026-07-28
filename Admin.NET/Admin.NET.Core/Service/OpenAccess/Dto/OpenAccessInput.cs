@@ -83,3 +83,39 @@ public class GenerateSignatureInput
     [Required(ErrorMessage = "随机数不能为空")]
     public string Nonce { get; set; }
 }
+
+/// <summary>
+/// 不回传密钥的开放接口身份更新参数
+/// </summary>
+public class UpdateOpenAccessSafeInput
+{
+    [Required(ErrorMessage = "开放接口身份不能为空")]
+    public long Id { get; set; }
+
+    [Required(ErrorMessage = "身份标识不能为空")]
+    [MaxLength(128)]
+    public string AccessKey { get; set; }
+
+    [Required(ErrorMessage = "绑定租户不能为空")]
+    public long BindTenantId { get; set; }
+
+    [Required(ErrorMessage = "绑定用户不能为空")]
+    public long BindUserId { get; set; }
+}
+
+/// <summary>
+/// 使用服务端已保存密钥生成签名参数
+/// </summary>
+public class GenerateStoredSignatureInput : BaseIdInput
+{
+    public HttpMethodEnum Method { get; set; }
+
+    [Required(ErrorMessage = "请求接口地址不能为空")]
+    public string Url { get; set; }
+
+    [Required(ErrorMessage = "时间戳不能为空")]
+    public long Timestamp { get; set; }
+
+    [Required(ErrorMessage = "随机数不能为空")]
+    public string Nonce { get; set; }
+}

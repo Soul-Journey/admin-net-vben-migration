@@ -40,7 +40,10 @@ class PreferenceManager {
   private state: Preferences;
 
   constructor() {
-    this.cache = new StorageManager();
+    // Isolate accidental pre-init access; initPreferences replaces this cache.
+    this.cache = new StorageManager({
+      prefix: 'vben-preferences-uninitialized',
+    });
     // 构造函数不再同步读取缓存，使用默认值初始化
     // 真正的缓存加载在 initPreferences 中完成（已经是 async）
     this.state = reactive<Preferences>({ ...defaultPreferences });

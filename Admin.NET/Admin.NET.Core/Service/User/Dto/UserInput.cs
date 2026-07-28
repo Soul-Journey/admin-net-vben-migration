@@ -126,6 +126,37 @@ public class ChangePwdInput
 }
 
 /// <summary>
+/// 当前用户个人资料更新参数
+/// </summary>
+public class UpdatePersonalInfoInput
+{
+    [Required(ErrorMessage = "真实姓名不能为空"), MaxLength(32)]
+    public string RealName { get; set; }
+
+    [MaxLength(32)]
+    public string? NickName { get; set; }
+
+    [MaxLength(16)]
+    public string? Phone { get; set; }
+
+    [MaxLength(64)]
+    public string? Email { get; set; }
+
+    public DateTime? Birthday { get; set; }
+
+    public GenderEnum Sex { get; set; }
+
+    [MaxLength(256)]
+    public string? Address { get; set; }
+
+    [MaxLength(256)]
+    public string? Remark { get; set; }
+
+    [MaxLength(512)]
+    public string? Introduction { get; set; }
+}
+
+/// <summary>
 /// 解除登录锁定输入参数
 /// </summary>
 public class UnlockLoginInput : BaseIdInput

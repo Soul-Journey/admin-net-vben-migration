@@ -13,10 +13,12 @@ namespace Admin.NET.Core.Service;
 public class SysCodeGenConfigService : IDynamicApiController, ITransient
 {
     private readonly ISqlSugarClient _db;
+    private readonly UserManager _userManager;
 
-    public SysCodeGenConfigService(ISqlSugarClient db)
+    public SysCodeGenConfigService(ISqlSugarClient db, UserManager userManager)
     {
         _db = db;
+        _userManager = userManager;
     }
 
     /// <summary>
@@ -27,6 +29,8 @@ public class SysCodeGenConfigService : IDynamicApiController, ITransient
     [DisplayName("获取代码生成配置列表")]
     public async Task<List<CodeGenConfig>> GetList([FromQuery] CodeGenConfig input)
     {
+        EnsureSuperAdmin();
+        if (input.CodeGenId <= 0) throw Oops.Oh("代码生成记录不能为空");
         return await _db.Queryable<SysCodeGenConfig>()
             .Where(u => u.CodeGenId == input.CodeGenId)
             .Select<CodeGenConfig>()
@@ -48,9 +52,20 @@ public class SysCodeGenConfigService : IDynamicApiController, ITransient
     [DisplayName("更新代码生成配置")]
     public async Task UpdateCodeGenConfig(List<CodeGenConfig> inputList)
     {
+        EnsureSuperAdmin();
         if (inputList == null || inputList.Count < 1) return;
+        if (inputList.Count > 256) throw Oops.Oh("单次最多配置 256 个字段");
+
+        var ids = inputList.Select(u => u.Id).Where(u => u > 0).Distinct().ToList();
+        if (ids.Count != inputList.Count) throw Oops.Oh("字段配置包含空标识或重复项");
+        var storedList = await _db.Queryable<SysCodeGenConfig>().Where(u => ids.Contains(u.Id)).ToListAsync();
+        if (storedList.Count != ids.Count) throw Oops.Oh("部分字段配置不存在或已被修改，请刷新后重试");
+        if (storedList.Select(u => u.CodeGenId).Distinct().Count() != 1)
+            throw Oops.Oh("不能跨代码生成记录批量修改字段");
+
         inputList.ForEach(e =>
         {
+            ValidateConfig(e);
             e.FkDisplayColumns = e.FkDisplayColumnList?.Count > 0 ? string.Join(",", e.FkDisplayColumnList) : null;
         });
         await _db.Updateable(inputList.Adapt<List<SysCodeGenConfig>>())
@@ -86,7 +101,7 @@ public class SysCodeGenConfigService : IDynamicApiController, ITransient
     /// <param name="tableColumnOutputList"></param>
     /// <param name="codeGenerate"></param>
     [NonAction]
-    public void AddList(List<ColumnOuput> tableColumnOutputList, SysCodeGen codeGenerate)
+    public async Task AddList(List<ColumnOuput> tableColumnOutputList, SysCodeGen codeGenerate)
     {
         if (tableColumnOutputList == null) return;
 
@@ -143,7 +158,7 @@ public class SysCodeGenConfigService : IDynamicApiController, ITransient
         }
         // 多库代码生成---这里要切回主库
         var provider = _db.AsTenant().GetConnectionScope(SqlSugarConst.MainConfigId);
-        provider.Insertable(codeGenConfigs).ExecuteCommand();
+        await provider.Insertable(codeGenConfigs).ExecuteCommandAsync();
     }
 
     /// <summary>
@@ -159,5 +174,64 @@ public class SysCodeGenConfigService : IDynamicApiController, ITransient
             "DateTime" => "~",
             _ => "==",
         };
+    }
+
+    private void EnsureSuperAdmin()
+    {
+        if (!_userManager.SuperAdmin)
+            throw Oops.Oh("代码生成仅允许超级管理员使用");
+    }
+
+    private static void ValidateConfig(CodeGenConfig input)
+    {
+        var yesNoValues = new[] { "Y", "N" };
+        var queryTypes = new[] { "==", "!=", ">", ">=", "<", "<=", "like", "in", "not in", "isNotNull", "~" };
+        var effectTypes = new[]
+        {
+            "Input", "InputNumber", "InputPassword", "InputTextArea", "TextArea", "Select", "Radio", "Checkbox",
+            "DatePicker", "TimePicker", "Switch", "Slider", "Rate", "ColorPicker", "Upload",
+            "DictSelector", "EnumSelector", "ConstSelector", "ForeignKey", "ApiTreeSelector"
+        };
+
+        if (!string.IsNullOrWhiteSpace(input.EffectType) && !effectTypes.Contains(input.EffectType))
+            throw Oops.Oh($"字段 {input.ColumnComment ?? input.ColumnName} 的控件类型无效");
+        if (!string.IsNullOrWhiteSpace(input.QueryType) && !queryTypes.Contains(input.QueryType))
+            throw Oops.Oh($"字段 {input.ColumnComment ?? input.ColumnName} 的查询方式无效");
+
+        var switches = new[]
+        {
+            input.WhetherQuery, input.WhetherRetract, input.WhetherRequired, input.WhetherSortable,
+            input.WhetherTable, input.WhetherAddUpdate, input.WhetherImport, input.WhetherCommon
+        };
+        if (switches.Any(u => !string.IsNullOrWhiteSpace(u) && !yesNoValues.Contains(u)))
+            throw Oops.Oh($"字段 {input.ColumnComment ?? input.ColumnName} 的开关值无效");
+
+        if (input.OrderNo is < 0 or > 100000) throw Oops.Oh("字段排序必须在 0 到 100000 之间");
+        if (input.FkDisplayColumnList?.Count > 8) throw Oops.Oh("外键显示字段最多选择 8 个");
+        if (input.FkDisplayColumnList?.Any(u => !Regex.IsMatch(u ?? "", "^[A-Za-z_][A-Za-z0-9_]{0,63}$")) == true)
+            throw Oops.Oh("外键显示字段格式无效");
+
+        EnsureOptionalSafeText(input.ColumnComment, "字段说明", 128);
+        EnsureOptionalIdentifier(input.DictTypeCode, "字典或枚举编码", 64, true);
+        EnsureOptionalIdentifier(input.FkConfigId, "关联库标识", 20, true);
+        EnsureOptionalIdentifier(input.FkEntityName, "关联实体", 64);
+        EnsureOptionalIdentifier(input.FkTableName, "关联表", 128);
+        EnsureOptionalIdentifier(input.FkLinkColumnName, "关联字段", 64);
+        EnsureOptionalIdentifier(input.PidColumn, "父级字段", 128);
+    }
+
+    private static void EnsureOptionalIdentifier(string value, string label, int maxLength, bool allowNumberPrefix = false)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        var pattern = allowNumberPrefix ? "^[A-Za-z0-9_][A-Za-z0-9_.-]*$" : "^[A-Za-z_][A-Za-z0-9_]*$";
+        if (value.Length > maxLength || !Regex.IsMatch(value, pattern))
+            throw Oops.Oh($"{label}格式无效");
+    }
+
+    private static void EnsureOptionalSafeText(string value, string label, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        if (value.Length > maxLength || value.IndexOfAny(new[] { '\"', '\'', '\\', '\r', '\n', '{', '}' }) >= 0)
+            throw Oops.Oh($"{label}不能超长，且不能包含引号、换行、反斜杠或花括号");
     }
 }

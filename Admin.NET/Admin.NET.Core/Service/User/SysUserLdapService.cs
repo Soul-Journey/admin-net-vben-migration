@@ -24,11 +24,20 @@ public class SysUserLdapService : ITransient
     /// <param name="tenantId"></param>
     /// <param name="sysUserLdapList"></param>
     /// <returns></returns>
+    [UnitOfWork]
     public async Task InsertUserLdapList(long tenantId, List<SysUserLdap> sysUserLdapList)
     {
+        sysUserLdapList = sysUserLdapList
+            .Where(u => !string.IsNullOrWhiteSpace(u.Account))
+            .GroupBy(u => u.Account, StringComparer.OrdinalIgnoreCase)
+            .Select(u => u.First())
+            .ToList();
+        sysUserLdapList.ForEach(u => u.TenantId = tenantId);
+
         await _sysUserLdapRep.DeleteAsync(u => u.TenantId == tenantId);
 
-        await _sysUserLdapRep.InsertRangeAsync(sysUserLdapList);
+        if (sysUserLdapList.Count > 0)
+            await _sysUserLdapRep.InsertRangeAsync(sysUserLdapList);
 
         await _sysUserLdapRep.AsUpdateable()
             .InnerJoin<SysUser>((l, u) => l.EmployeeId == u.Account)

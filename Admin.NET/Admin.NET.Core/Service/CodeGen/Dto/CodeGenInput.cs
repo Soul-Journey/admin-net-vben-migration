@@ -14,31 +14,37 @@ public class CodeGenInput : BasePageInput
     /// <summary>
     /// 作者姓名
     /// </summary>
+    [MaxLength(32)]
     public virtual string AuthorName { get; set; }
 
     /// <summary>
     /// 类名
     /// </summary>
+    [MaxLength(128)]
     public virtual string ClassName { get; set; }
 
     /// <summary>
     /// 是否移除表前缀
     /// </summary>
+    [MaxLength(8)]
     public virtual string TablePrefix { get; set; }
 
     /// <summary>
     /// 库定位器名
     /// </summary>
+    [MaxLength(64)]
     public virtual string ConfigId { get; set; }
 
     /// <summary>
     /// 数据库名(保留字段)
     /// </summary>
+    [MaxLength(64)]
     public virtual string DbName { get; set; }
 
     /// <summary>
     /// 数据库类型
     /// </summary>
+    [MaxLength(64)]
     public virtual string DbType { get; set; }
 
     /// <summary>
@@ -49,26 +55,31 @@ public class CodeGenInput : BasePageInput
     /// <summary>
     /// 生成方式
     /// </summary>
+    [MaxLength(32)]
     public virtual string GenerateType { get; set; }
 
     /// <summary>
     /// 数据库表名
     /// </summary>
+    [MaxLength(128)]
     public virtual string TableName { get; set; }
 
     /// <summary>
     /// 命名空间
     /// </summary>
+    [MaxLength(128)]
     public virtual string NameSpace { get; set; }
 
     /// <summary>
     /// 业务名（业务代码包名称）
     /// </summary>
+    [MaxLength(128)]
     public virtual string BusName { get; set; }
 
     /// <summary>
     /// 功能名（数据库表名称）
     /// </summary>
+    [MaxLength(128)]
     public virtual string TableComment { get; set; }
 
     /// <summary>
@@ -101,48 +112,59 @@ public class CodeGenInput : BasePageInput
     /// <summary>
     /// 菜单图标
     /// </summary>
+    [MaxLength(32)]
     public virtual string MenuIcon { get; set; }
 
     /// <summary>
     /// 页面目录
     /// </summary>
+    [MaxLength(32)]
     public virtual string PagePath { get; set; }
 
     /// <summary>
     /// 支持打印类型
     /// </summary>
+    [MaxLength(32)]
     public virtual string PrintType { get; set; }
 
     /// <summary>
     /// 打印模版名称
     /// </summary>
+    [MaxLength(32)]
     public virtual string PrintName { get; set; }
 }
 
 public class AddCodeGenInput : CodeGenInput
 {
+    [Required(ErrorMessage = "库定位器不能为空")]
+    public override string ConfigId { get; set; }
+
     /// <summary>
     /// 数据库表名
     /// </summary>
     [Required(ErrorMessage = "数据库表名不能为空")]
+    [RegularExpression("^[A-Za-z_][A-Za-z0-9_]{0,127}$", ErrorMessage = "数据库表名格式无效")]
     public override string TableName { get; set; }
 
     /// <summary>
     /// 业务名（业务代码包名称）
     /// </summary>
     [Required(ErrorMessage = "业务名不能为空")]
+    [MaxLength(128)]
     public override string BusName { get; set; }
 
     /// <summary>
     /// 命名空间
     /// </summary>
     [Required(ErrorMessage = "命名空间不能为空")]
+    [RegularExpression("^[A-Za-z_][A-Za-z0-9_.]{0,127}$", ErrorMessage = "命名空间格式无效")]
     public override string NameSpace { get; set; }
 
     /// <summary>
     /// 作者姓名
     /// </summary>
     [Required(ErrorMessage = "作者姓名不能为空")]
+    [MaxLength(32)]
     public override string AuthorName { get; set; }
 
     ///// <summary>
@@ -161,7 +183,12 @@ public class AddCodeGenInput : CodeGenInput
     /// 生成方式
     /// </summary>
     [Required(ErrorMessage = "生成方式不能为空")]
+    [RegularExpression("^(100|111|121|200|211|221)$", ErrorMessage = "生成方式无效")]
     public override string GenerateType { get; set; }
+
+    [Required(ErrorMessage = "前端目录不能为空")]
+    [RegularExpression("^[A-Za-z][A-Za-z0-9/_-]{0,31}$", ErrorMessage = "前端目录格式无效")]
+    public override string PagePath { get; set; }
 
     ///// <summary>
     ///// 功能名（数据库表名称）

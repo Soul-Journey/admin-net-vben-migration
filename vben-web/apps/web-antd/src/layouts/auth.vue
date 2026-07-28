@@ -5,6 +5,9 @@ import { AuthPageLayout } from '@vben/layouts';
 import { preferences } from '@vben/preferences';
 
 import { $t } from '#/locales';
+import { loadSystemBranding } from '#/store';
+
+void loadSystemBranding();
 
 const appName = computed(() => preferences.app.name);
 const logo = computed(() => preferences.logo.source);
@@ -27,8 +30,8 @@ const logoDark = computed(() => preferences.logo.sourceDark);
 <style scoped>
 :global(.slide-right-enter-active),
 :global(.slide-right-leave-active) {
-  animation: none !important;
   transition: none !important;
+  animation: none !important;
 }
 
 :global(.slide-right-enter-from),

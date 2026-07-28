@@ -30,7 +30,9 @@ public static class LoggingSetup
             //options.WithStackFrame = true; // 显示程序集
             options.WriteFilter = (logMsg) =>
             {
-                return consoleLog;
+                // LoggingMonitor 的完整请求快照包含 Authorization、Cookie 等敏感请求头。
+                // 操作日志仍由数据库写入器保存，控制台仅跳过这类原始快照。
+                return consoleLog && logMsg.LogName != CommonConst.SysLogCategoryName;
             };
         });
 

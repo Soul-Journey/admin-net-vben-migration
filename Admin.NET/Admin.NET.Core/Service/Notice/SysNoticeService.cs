@@ -106,24 +106,32 @@ public class SysNoticeService : IDynamicApiController, ITransient
     /// </summary>
     /// <param name="input"></param>
     /// <returns></returns>
+    [UnitOfWork]
     [DisplayName("发布通知公告")]
     public async Task Public(NoticeInput input)
     {
-        if (!(await _sysNoticeRep.IsAnyAsync(u => u.Id == input.Id && u.CreateUserId == _userManager.UserId)))
+        var notice = await _sysNoticeRep.GetByIdAsync(input.Id);
+        if (notice == null || notice.CreateUserId != _userManager.UserId)
             throw Oops.Oh(ErrorCodeEnum.D7003);
 
-        // 更新发布状态和时间
-        await _sysNoticeRep.UpdateAsync(u => new SysNotice() { Status = NoticeStatusEnum.PUBLIC, PublicTime = DateTime.Now }, u => u.Id == input.Id);
+        var publicTime = DateTime.Now;
+        var affectedRows = await _sysNoticeRep.AsUpdateable()
+            .SetColumns(u => new SysNotice { Status = NoticeStatusEnum.PUBLIC, PublicTime = publicTime })
+            .Where(u => u.Id == input.Id && u.CreateUserId == _userManager.UserId && u.Status != NoticeStatusEnum.PUBLIC)
+            .ExecuteCommandAsync();
+        if (affectedRows == 0)
+            throw Oops.Oh(ErrorCodeEnum.D7000);
 
-        var notice = await _sysNoticeRep.GetByIdAsync(input.Id);
+        notice.Status = NoticeStatusEnum.PUBLIC;
+        notice.PublicTime = publicTime;
 
         // 通知到的人(所有账号)
         var userIdList = await _sysUserRep.AsQueryable().Select(u => u.Id).ToListAsync();
 
-        await _sysNoticeUserRep.DeleteAsync(u => u.NoticeId == notice.Id);
+        await _sysNoticeUserRep.DeleteAsync(u => u.NoticeId == input.Id);
         var noticeUserList = userIdList.Select(u => new SysNoticeUser
         {
-            NoticeId = notice.Id,
+            NoticeId = input.Id,
             UserId = u,
         }).ToList();
         await _sysNoticeUserRep.InsertRangeAsync(noticeUserList);

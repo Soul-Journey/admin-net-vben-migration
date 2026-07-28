@@ -102,13 +102,16 @@ public class SysUserService : IDynamicApiController, ITransient
     [DisplayName("增加用户")]
     public virtual async Task<long> AddUser(AddUserInput input)
     {
-        var query = _sysUserRep.AsQueryable().ClearFilter().Where(u => u.TenantId == _userManager.TenantId || u.AccountType == AccountTypeEnum.SuperAdmin);
+        ValidateAccountType(input.AccountType);
+        if (!_userManager.SuperAdmin) input.TenantId = _userManager.TenantId;
+        var targetTenantId = input.TenantId ?? _userManager.TenantId;
+        await ValidateOrganizationAssignments(input, targetTenantId);
+        await ValidateRoleAssignments(input.RoleIdList, targetTenantId);
+
+        var query = _sysUserRep.AsQueryable().ClearFilter().Where(u => u.TenantId == targetTenantId || u.AccountType == AccountTypeEnum.SuperAdmin);
 
         if (await query.AnyAsync(u => u.Account == input.Account)) throw Oops.Oh(ErrorCodeEnum.D1003);
         if (!string.IsNullOrWhiteSpace(input.Phone) && await query.AnyAsync(u => u.Phone == input.Phone)) throw Oops.Oh(ErrorCodeEnum.D1032);
-
-        // 禁止越权新增超级管理员和系统管理员
-        if (_userManager.AccountType != AccountTypeEnum.SuperAdmin && input.AccountType is AccountTypeEnum.SuperAdmin or AccountTypeEnum.SysAdmin) throw Oops.Oh(ErrorCodeEnum.D1038);
 
         var password = await _sysConfigService.GetConfigValue<string>(ConfigConst.SysPassword);
 
@@ -185,15 +188,21 @@ public class SysUserService : IDynamicApiController, ITransient
     [DisplayName("更新用户")]
     public virtual async Task UpdateUser(UpdateUserInput input)
     {
+        var originalUser = await GetManageableUser(input.Id);
+        ValidateAccountType(input.AccountType);
+        input.TenantId = originalUser.TenantId;
+        var targetTenantId = originalUser.TenantId ?? _userManager.TenantId;
+        await ValidateOrganizationAssignments(input, targetTenantId);
+        await ValidateRoleAssignments(input.RoleIdList, targetTenantId);
+        var originalOrgId = originalUser.OrgId;
+        var originalRoleIds = await _sysUserRoleService.GetUserRoleIdList(input.Id);
+
         // 是否租户隔离登录验证
         var query = _sysUserRep.AsQueryable().ClearFilter()
-            .Where(u => u.Id != input.Id && (u.TenantId == _userManager.TenantId || u.AccountType == AccountTypeEnum.SuperAdmin));
+            .Where(u => u.Id != input.Id && (u.TenantId == targetTenantId || u.AccountType == AccountTypeEnum.SuperAdmin));
 
         if (await query.AnyAsync(u => u.Account == input.Account)) throw Oops.Oh(ErrorCodeEnum.D1003);
         if (!string.IsNullOrWhiteSpace(input.Phone) && await query.AnyAsync(u => u.Phone == input.Phone)) throw Oops.Oh(ErrorCodeEnum.D1032);
-
-        // 禁止越权更新超级管理员或系统管理员信息
-        if (_userManager.AccountType != AccountTypeEnum.SuperAdmin && input.AccountType is AccountTypeEnum.SuperAdmin or AccountTypeEnum.SysAdmin) throw Oops.Oh(ErrorCodeEnum.D1038);
 
         await _sysUserRep.AsUpdateable(input.Adapt<SysUser>()).IgnoreColumns(true)
             .IgnoreColumns(u => new { u.Password, u.Status, u.TenantId }).ExecuteCommandAsync();
@@ -205,8 +214,7 @@ public class SysUserService : IDynamicApiController, ITransient
 
         // 若账号的角色和组织架构发生变化,则强制下线账号进行权限更新
         var user = await _sysUserRep.AsQueryable().ClearFilter().FirstAsync(u => u.Id == input.Id);
-        var roleIds = await GetOwnRoleList(input.Id);
-        if (input.OrgId != user.OrgId || !input.RoleIdList.OrderBy(u => u).SequenceEqual(roleIds.OrderBy(u => u)))
+        if (input.OrgId != originalOrgId || !(input.RoleIdList ?? new List<long>()).OrderBy(u => u).SequenceEqual(originalRoleIds.OrderBy(u => u)))
             await _sysOnlineUserService.ForceOffline(input.Id);
         // 更新域账号
         await _sysUserLdapService.AddUserLdap(user.TenantId!.Value, user.Id, user.Account, input.DomainAccount);
@@ -241,7 +249,7 @@ public class SysUserService : IDynamicApiController, ITransient
     [DisplayName("删除用户")]
     public virtual async Task DeleteUser(DeleteUserInput input)
     {
-        var user = await _sysUserRep.GetByIdAsync(input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D0009);
+        var user = await GetManageableUser(input.Id);
         user.ValidateIsSuperAdminAccountType();
         user.ValidateIsUserId(_userManager.UserId);
 
@@ -283,9 +291,18 @@ public class SysUserService : IDynamicApiController, ITransient
     /// </summary>
     /// <returns></returns>
     [DisplayName("查看用户基本信息")]
-    public virtual async Task<SysUser> GetBaseInfo()
+    public virtual async Task<PersonalInfoOutput> GetBaseInfo()
     {
-        return await _sysUserRep.GetByIdAsync(_userManager.UserId);
+        return await _sysUserRep.AsQueryable()
+            .LeftJoin<SysOrg>((u, org) => u.OrgId == org.Id)
+            .LeftJoin<SysPos>((u, org, pos) => u.PosId == pos.Id)
+            .Where(u => u.Id == _userManager.UserId)
+            .Select((u, org, pos) => new PersonalInfoOutput
+            {
+                OrgName = org.Name,
+                PosName = pos.Name,
+            }, true)
+            .FirstAsync();
     }
 
     /// <summary>
@@ -294,10 +311,37 @@ public class SysUserService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "BaseInfo"), HttpPost]
     [DisplayName("更新用户基本信息")]
-    public virtual async Task<int> UpdateBaseInfo(SysUser user)
+    public virtual async Task<int> UpdateBaseInfo(UpdatePersonalInfoInput input)
     {
-        return await _sysUserRep.AsUpdateable(user)
-            .IgnoreColumns(u => new { u.CreateTime, u.Account, u.Password, u.AccountType, u.OrgId, u.PosId }).ExecuteCommandAsync();
+        var user = await _sysUserRep.GetByIdAsync(_userManager.UserId) ?? throw Oops.Oh(ErrorCodeEnum.D0009);
+        if (!string.IsNullOrWhiteSpace(input.Phone))
+        {
+            var duplicatePhone = await _sysUserRep.AsQueryable().ClearFilter()
+                .AnyAsync(u => u.Id != user.Id && u.Phone == input.Phone &&
+                    (u.TenantId == user.TenantId || u.AccountType == AccountTypeEnum.SuperAdmin));
+            if (duplicatePhone) throw Oops.Oh(ErrorCodeEnum.D1032);
+        }
+
+        input.Adapt(user);
+        var rows = await _sysUserRep.AsUpdateable(user)
+            .UpdateColumns(u => new
+            {
+                u.RealName,
+                u.NickName,
+                u.Phone,
+                u.Email,
+                u.Birthday,
+                u.Sex,
+                u.Address,
+                u.Remark,
+                u.Introduction,
+            })
+            .ExecuteCommandAsync();
+
+        if (rows > 0)
+            await _eventPublisher.PublishAsync(SysUserEventTypeEnum.Update, new { Entity = user, Input = input });
+
+        return rows;
     }
 
     /// <summary>
@@ -312,7 +356,7 @@ public class SysUserService : IDynamicApiController, ITransient
         if (_userManager.UserId == input.Id)
             throw Oops.Oh(ErrorCodeEnum.D1026);
 
-        var user = await _sysUserRep.GetByIdAsync(input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D0009);
+        var user = await GetManageableUser(input.Id);
         user.ValidateIsSuperAdminAccountType(ErrorCodeEnum.D1015);
         if (!Enum.IsDefined(typeof(StatusEnum), input.Status))
             throw Oops.Oh(ErrorCodeEnum.D3005);
@@ -354,9 +398,8 @@ public class SysUserService : IDynamicApiController, ITransient
     [DisplayName("授权用户角色")]
     public async Task GrantRole(UserRoleInput input)
     {
-        //var user = await _sysUserRep.GetFirstAsync(u => u.Id == input.UserId) ?? throw Oops.Oh(ErrorCodeEnum.D0009);
-        //if (user.AccountType == AccountTypeEnum.SuperAdmin)
-        //    throw Oops.Oh(ErrorCodeEnum.D1022);
+        var user = await GetManageableUser(input.UserId);
+        await ValidateRoleAssignments(input.RoleIdList, user.TenantId ?? _userManager.TenantId);
 
         await _sysUserRoleService.GrantUserRole(input);
 
@@ -424,7 +467,7 @@ public class SysUserService : IDynamicApiController, ITransient
     [DisplayName("重置用户密码")]
     public virtual async Task<string> ResetPwd(ResetPwdUserInput input)
     {
-        var user = await _sysUserRep.GetByIdAsync(input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D0009);
+        var user = await GetManageableUser(input.Id);
         string randomPassword = new(Enumerable.Repeat("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 6).Select(s => s[Random.Shared.Next(s.Length)]).ToArray());
         user.Password = CryptogramUtil.Encrypt(randomPassword);
         await _sysUserRep.AsUpdateable(user).UpdateColumns(u => u.Password).ExecuteCommandAsync();
@@ -451,7 +494,7 @@ public class SysUserService : IDynamicApiController, ITransient
     [DisplayName("解除登录锁定")]
     public virtual async Task UnlockLogin(UnlockLoginInput input)
     {
-        var user = await _sysUserRep.GetByIdAsync(input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D0009);
+        var user = await GetManageableUser(input.Id);
 
         // 清空密码错误次数
         var keyPasswordErrorTimes = $"{CacheConst.KeyPasswordErrorTimes}{user.Account}";
@@ -473,6 +516,7 @@ public class SysUserService : IDynamicApiController, ITransient
     [DisplayName("获取用户拥有角色集合")]
     public async Task<List<long>> GetOwnRoleList(long userId)
     {
+        await GetManageableUser(userId);
         return await _sysUserRoleService.GetUserRoleIdList(userId);
     }
 
@@ -484,6 +528,85 @@ public class SysUserService : IDynamicApiController, ITransient
     [DisplayName("获取用户扩展机构集合")]
     public async Task<List<SysUserExtOrg>> GetOwnExtOrgList(long userId)
     {
+        await GetManageableUser(userId);
         return await _sysUserExtOrgService.GetUserExtOrgList(userId);
+    }
+
+    /// <summary>
+    /// 校验当前账号是否可以操作目标用户，范围与用户列表保持一致。
+    /// </summary>
+    private async Task<SysUser> GetManageableUser(long userId)
+    {
+        var user = await _sysUserRep.AsQueryable().ClearFilter()
+            .FirstAsync(u => u.Id == userId && !u.IsDelete) ?? throw Oops.Oh(ErrorCodeEnum.D0009);
+        if (user.AccountType == AccountTypeEnum.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D1038);
+        if (_userManager.SuperAdmin) return user;
+        if (user.TenantId != _userManager.TenantId || user.AccountType == AccountTypeEnum.SysAdmin)
+            throw Oops.Oh(ErrorCodeEnum.D1038);
+
+        var manageableOrgIds = await _sysOrgService.GetUserOrgIdList();
+        if (!manageableOrgIds.Contains(user.OrgId)) throw Oops.Oh(ErrorCodeEnum.D1013);
+        return user;
+    }
+
+    /// <summary>
+    /// 超级管理员账号只能通过系统种子和专用运维流程维护。
+    /// </summary>
+    private void ValidateAccountType(AccountTypeEnum accountType)
+    {
+        if (!Enum.IsDefined(typeof(AccountTypeEnum), accountType)
+            || accountType == AccountTypeEnum.SuperAdmin
+            || (!_userManager.SuperAdmin && accountType == AccountTypeEnum.SysAdmin))
+            throw Oops.Oh(ErrorCodeEnum.D1038);
+    }
+
+    /// <summary>
+    /// 角色必须属于目标租户，普通账号只能分配自己拥有或创建的角色。
+    /// </summary>
+    private async Task ValidateRoleAssignments(List<long> roleIds, long targetTenantId)
+    {
+        var requestedIds = (roleIds ?? new List<long>()).Where(u => u > 0).Distinct().ToList();
+        if (requestedIds.Count == 0) return;
+
+        var roles = await _sysUserRep.Context.Queryable<SysRole>().ClearFilter()
+            .Where(u => requestedIds.Contains(u.Id) && !u.IsDelete)
+            .ToListAsync();
+        if (roles.Count != requestedIds.Count || roles.Any(u => u.TenantId != targetTenantId))
+            throw Oops.Oh(ErrorCodeEnum.D1016);
+
+        if (_userManager.SuperAdmin || _userManager.SysAdmin) return;
+        var ownRoleIds = await _sysUserRoleService.GetUserRoleIdList(_userManager.UserId);
+        if (roles.Any(u => u.CreateUserId != _userManager.UserId && !ownRoleIds.Contains(u.Id)))
+            throw Oops.Oh(ErrorCodeEnum.D1016);
+    }
+
+    /// <summary>
+    /// 主机构、附属机构和职位必须真实存在于目标租户，非超管还需位于自身数据范围。
+    /// </summary>
+    private async Task ValidateOrganizationAssignments(AddUserInput input, long targetTenantId)
+    {
+        var extOrgs = input.ExtOrgIdList ?? new List<SysUserExtOrg>();
+        var orgIds = extOrgs.Select(u => u.OrgId).Append(input.OrgId).Where(u => u > 0).Distinct().ToList();
+        var positionIds = extOrgs.Select(u => u.PosId).Append(input.PosId).Where(u => u > 0).Distinct().ToList();
+
+        var organizations = orgIds.Count == 0
+            ? new List<SysOrg>()
+            : await _sysUserRep.Context.Queryable<SysOrg>().ClearFilter()
+                .Where(u => orgIds.Contains(u.Id) && !u.IsDelete)
+                .ToListAsync();
+        if (organizations.Count != orgIds.Count || organizations.Any(u => u.TenantId != targetTenantId))
+            throw Oops.Oh(ErrorCodeEnum.D1013);
+
+        var positions = positionIds.Count == 0
+            ? new List<SysPos>()
+            : await _sysUserRep.Context.Queryable<SysPos>().ClearFilter()
+                .Where(u => positionIds.Contains(u.Id) && !u.IsDelete)
+                .ToListAsync();
+        if (positions.Count != positionIds.Count || positions.Any(u => u.TenantId != targetTenantId))
+            throw Oops.Oh(ErrorCodeEnum.D1013);
+
+        if (_userManager.SuperAdmin) return;
+        var manageableOrgIds = await _sysOrgService.GetUserOrgIdList();
+        if (!orgIds.All(manageableOrgIds.Contains)) throw Oops.Oh(ErrorCodeEnum.D1013);
     }
 }

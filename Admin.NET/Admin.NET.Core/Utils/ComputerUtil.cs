@@ -143,18 +143,19 @@ public static class ComputerUtil
     /// 获取外网IP地址
     /// </summary>
     /// <returns></returns>
-    public static string GetIpFromOnline()
+    public static async Task<string> GetIpFromOnlineAsync()
     {
         try
         {
-            var url = "https://www.ip.cn/api/index?ip&type=0";
-            var str = url.GetAsStringAsync().GetAwaiter().GetResult();
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            var str = await client.GetStringAsync("https://www.ip.cn/api/index?ip&type=0");
             var resp = JSON.Deserialize<IpCnResp>(str);
-            return resp.Ip + " " + resp.Address;
+            var result = $"{resp?.Ip} {resp?.Address}".Trim();
+            return string.IsNullOrWhiteSpace(result) ? "未知" : result;
         }
         catch
         {
-            return "unknow";
+            return "未知";
         }
     }
 

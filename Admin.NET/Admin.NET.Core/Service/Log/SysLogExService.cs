@@ -54,7 +54,8 @@ public class SysLogExService : IDynamicApiController, ITransient
     [DisplayName("获取异常日志详情")]
     public async Task<SysLogEx> GetDetail(long id)
     {
-        return await _sysLogExRep.GetFirstAsync(u => u.Id == id);
+        var log = await _sysLogExRep.GetFirstAsync(u => u.Id == id) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+        return LogSanitizer.Sanitize(log);
     }
 
     /// <summary>
@@ -63,9 +64,12 @@ public class SysLogExService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Clear"), HttpPost]
     [DisplayName("清空异常日志")]
-    public void Clear()
+    public async Task<int> Clear(LogInput? input = null)
     {
-        _sysLogExRep.AsSugarClient().DbMaintenance.TruncateTable<SysLogEx>();
+        if (!_userManager.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D3010);
+        if (input?.TenantId > 0)
+            return await _sysLogExRep.AsDeleteable().Where(u => u.TenantId == input.TenantId).ExecuteCommandAsync();
+        return await _sysLogExRep.AsDeleteable().ExecuteCommandAsync();
     }
 
     /// <summary>
@@ -77,6 +81,7 @@ public class SysLogExService : IDynamicApiController, ITransient
     public async Task<IActionResult> ExportLogEx(LogInput input)
     {
         var logExList = await _sysLogExRep.AsQueryable()
+            .WhereIF(_userManager.SuperAdmin && input.TenantId > 0, u => u.TenantId == input.TenantId)
             .WhereIF(!string.IsNullOrWhiteSpace(input.StartTime.ToString()) && !string.IsNullOrWhiteSpace(input.EndTime.ToString()),
                     u => u.CreateTime >= input.StartTime && u.CreateTime <= input.EndTime)
             .OrderBy(u => u.CreateTime, OrderByType.Desc)

@@ -26,6 +26,9 @@
     "#/*": "./src/*"
   },
   "dependencies": {
+    "@logicflow/core": "catalog:",
+    "@logicflow/extension": "catalog:",
+    "@microsoft/signalr": "catalog:",
     "@vben/access": "workspace:*",
     "@vben/common-ui": "workspace:*",
     "@vben/constants": "workspace:*",
@@ -41,11 +44,18 @@
     "@vben/types": "workspace:*",
     "@vben/utils": "workspace:*",
     "@vueuse/core": "catalog:",
+    "@vueuse/integrations": "catalog:",
     "ant-design-vue": "catalog:",
     "dayjs": "catalog:",
+    "dompurify": "catalog:",
+    "element-plus": "catalog:conflicts_element-plus_2_8_8",
     "pinia": "catalog:",
-    "sm-crypto-v2": "^1.9.3",
+    "qrcode": "catalog:",
+    "signature_pad": "catalog:",
+    "sm-crypto-v2": "catalog:",
+    "vform3-builds": "catalog:",
     "vue": "catalog:",
+    "vue-plugin-hiprint": "catalog:",
     "vue-router": "catalog:"
   }
 }

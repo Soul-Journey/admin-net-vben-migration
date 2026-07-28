@@ -16,6 +16,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import { useAccess } from '@vben/access';
 import { IconifyIcon } from '@vben/icons';
+import { useUserStore } from '@vben/stores';
 
 import {
   Avatar,
@@ -24,7 +25,6 @@ import {
   DatePicker,
   Descriptions,
   Divider,
-  Drawer,
   Empty,
   Form,
   Input,
@@ -62,6 +62,7 @@ import {
   unlockUserLoginApi,
   updateUserApi,
 } from '#/api';
+import { ADMIN_PAGINATION_PROPS } from '#/utils/pagination';
 
 defineOptions({ name: 'AdminNetSystemUser' });
 
@@ -76,12 +77,13 @@ const SYS_ADMIN_ACCOUNT = 888;
 const SUPER_ADMIN_ACCOUNT = 999;
 
 const { hasAccessByCodes } = useAccess();
+const userStore = useUserStore();
 
 const loading = ref(false);
 const orgLoading = ref(false);
 const optionLoading = ref(false);
-const drawerOpen = ref(false);
-const drawerTitle = ref('新增用户');
+const editorOpen = ref(false);
+const editorTitle = ref('新增用户');
 const submitLoading = ref(false);
 const activeFormTab = ref('basic');
 const orgCommandOpen = ref(false);
@@ -115,16 +117,28 @@ const pagination = reactive({
 const users = ref<SysUserRecord[]>([]);
 const formState = reactive<UserFormState>({});
 
-const accountTypeOptions = [
+const standardAccountTypeOptions = [
   { label: '会员', value: MEMBER_ACCOUNT },
   { label: '普通账号', value: NORMAL_ACCOUNT },
-  { label: '系统管理员', value: SYS_ADMIN_ACCOUNT },
 ];
 
 const accountTypeDisplayOptions = [
-  ...accountTypeOptions,
+  ...standardAccountTypeOptions,
+  { label: '系统管理员', value: SYS_ADMIN_ACCOUNT },
   { label: '超级管理员', value: SUPER_ADMIN_ACCOUNT },
 ];
+
+const isSuperAdmin = computed(
+  () =>
+    Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
+);
+
+const accountTypeOptions = computed(() => [
+  ...standardAccountTypeOptions,
+  ...(isSuperAdmin.value
+    ? [{ label: '系统管理员', value: SYS_ADMIN_ACCOUNT }]
+    : []),
+]);
 
 const cardTypeOptions = [
   { label: '身份证', value: 0 },
@@ -193,27 +207,66 @@ const formRules: Record<string, Rule[]> = {
     { message: '请输入账号', required: true, trigger: 'blur', type: 'string' },
   ],
   accountType: [
-    { message: '请选择账号类型', required: true, trigger: 'change', type: 'number' },
+    {
+      message: '请选择账号类型',
+      required: true,
+      trigger: 'change',
+      type: 'number',
+    },
   ],
   orgId: [
-    { message: '请选择所属机构', required: true, trigger: 'change', type: 'number' },
+    {
+      message: '请选择所属机构',
+      required: true,
+      trigger: 'change',
+      type: 'number',
+    },
   ],
   phone: [
-    { message: '请输入手机号', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入手机号',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   posId: [
-    { message: '请选择职位', required: true, trigger: 'change', type: 'number' },
+    {
+      message: '请选择职位',
+      required: true,
+      trigger: 'change',
+      type: 'number',
+    },
   ],
   realName: [
-    { message: '请输入真实姓名', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入真实姓名',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
 };
 
+const effectiveFormTenantId = computed(
+  () =>
+    formState.tenantId ??
+    selectedTenantId.value ??
+    Number((userStore.userInfo as any)?.tenantId ?? 0),
+);
+
 const posOptions = computed(() =>
-  posList.value.map((item) => ({
-    label: item.name,
-    value: item.id,
-  })),
+  posList.value
+    .filter(
+      (item) =>
+        !effectiveFormTenantId.value ||
+        !item.tenantId ||
+        item.tenantId === effectiveFormTenantId.value,
+    )
+    .map((item) => ({
+      label: item.name,
+      value: item.id,
+    })),
 );
 
 const tenantOptions = computed(() =>
@@ -224,10 +277,17 @@ const tenantOptions = computed(() =>
 );
 
 const roleTransferData = computed(() =>
-  roleList.value.map((item) => ({
-    key: String(item.id),
-    title: item.name,
-  })),
+  roleList.value
+    .filter(
+      (item) =>
+        !effectiveFormTenantId.value ||
+        !item.tenantId ||
+        item.tenantId === effectiveFormTenantId.value,
+    )
+    .map((item) => ({
+      key: String(item.id),
+      title: item.name,
+    })),
 );
 
 const roleTransferTargetKeys = computed<string[]>({
@@ -274,10 +334,7 @@ function getOrgIcon(level: number) {
   return 'lucide:tag';
 }
 
-function toOrgTreeData(
-  items: SysOrg[] = [],
-  level = 1,
-): TreeProps['treeData'] {
+function toOrgTreeData(items: SysOrg[] = [], level = 1): TreeProps['treeData'] {
   return items.map((item) => ({
     children: toOrgTreeData(item.children, level + 1),
     icon: getOrgIcon(level),
@@ -377,7 +434,9 @@ async function loadOptions() {
     posList.value = positions.status === 'fulfilled' ? positions.value : [];
     roleList.value = roles.status === 'fulfilled' ? roles.value : [];
 
-    if ([tenants, positions, roles].some((item) => item.status === 'rejected')) {
+    if (
+      [tenants, positions, roles].some((item) => item.status === 'rejected')
+    ) {
       message.warning('部分基础选项加载失败，请刷新后重试');
     }
   } finally {
@@ -491,15 +550,15 @@ async function handleOrgSelect(
 }
 
 function openCreateUser() {
-  drawerTitle.value = '添加账号';
+  editorTitle.value = '添加账号';
   activeFormTab.value = 'basic';
   resetFormState(makeDefaultUser());
-  drawerOpen.value = true;
+  editorOpen.value = true;
 }
 
 async function openEditUser(record: LooseUserRecord) {
   const user = record as SysUserRecord;
-  drawerTitle.value = '编辑账号';
+  editorTitle.value = '编辑账号';
   activeFormTab.value = 'basic';
   const [roleIds, extOrgs] = await Promise.all([
     getUserRoleIdsApi(user.id),
@@ -510,12 +569,12 @@ async function openEditUser(record: LooseUserRecord) {
     extOrgIdList: extOrgs ?? [],
     roleIdList: roleIds ?? [],
   });
-  drawerOpen.value = true;
+  editorOpen.value = true;
 }
 
 async function openCopyUser(record: LooseUserRecord) {
   const user = record as SysUserRecord;
-  drawerTitle.value = '复制账号';
+  editorTitle.value = '复制账号';
   activeFormTab.value = 'basic';
   const [roleIds, extOrgs] = await Promise.all([
     getUserRoleIdsApi(user.id),
@@ -528,7 +587,7 @@ async function openCopyUser(record: LooseUserRecord) {
     id: undefined,
     roleIdList: roleIds ?? [],
   });
-  drawerOpen.value = true;
+  editorOpen.value = true;
 }
 
 function addExtOrgRow() {
@@ -572,7 +631,7 @@ async function submitUser() {
       message.success('用户已新增');
     }
 
-    drawerOpen.value = false;
+    editorOpen.value = false;
     await loadUsers();
   } finally {
     submitLoading.value = false;
@@ -938,13 +997,11 @@ watch(orgFilterText, (value) => {
 
         <div class="table-footer">
           <Pagination
+            v-bind="ADMIN_PAGINATION_PROPS"
             v-model:current="pagination.page"
             v-model:page-size="pagination.pageSize"
-            :page-size-options="['10', '20', '50', '100']"
             :show-total="(total) => `共 ${total} 条`"
             :total="pagination.total"
-            show-quick-jumper
-            show-size-changer
             size="small"
             @change="handlePageChange"
             @show-size-change="handlePageChange"
@@ -953,163 +1010,170 @@ watch(orgFilterText, (value) => {
       </main>
     </section>
 
-    <Drawer
-      v-model:open="drawerOpen"
+    <Modal
+      v-model:open="editorOpen"
+      :body-style="{
+        maxHeight: 'calc(100dvh - 190px)',
+        overflowY: 'auto',
+        padding: '8px 20px 16px',
+      }"
       :confirm-loading="submitLoading"
-      :title="drawerTitle"
+      :mask-closable="false"
+      :title="editorTitle"
+      centered
       destroy-on-close
-      placement="right"
-      width="760"
-      @close="formRef?.clearValidate()"
+      :width="880"
+      @cancel="formRef?.clearValidate()"
     >
       <Form
         ref="formRef"
+        class="user-editor-form"
         :model="formState"
         :rules="formRules"
         layout="vertical"
       >
         <Tabs v-model:active-key="activeFormTab">
           <Tabs.TabPane key="basic" tab="基础信息">
-        <Divider orientation="left">基础信息</Divider>
-        <Row :gutter="16">
-          <Col :span="12">
-            <Form.Item label="账号名称" name="account">
-              <Input
-                v-model:value="formState.account"
-                :disabled="!!formState.id"
-                allow-clear
-              />
-            </Form.Item>
-          </Col>
-          <Col :span="12">
-            <Form.Item label="真实姓名" name="realName">
-              <Input v-model:value="formState.realName" allow-clear />
-            </Form.Item>
-          </Col>
-          <Col :span="12">
-            <Form.Item label="手机号" name="phone">
-              <Input v-model:value="formState.phone" allow-clear />
-            </Form.Item>
-          </Col>
-          <Col :span="12">
-            <Form.Item label="昵称" name="nickName">
-              <Input v-model:value="formState.nickName" allow-clear />
-            </Form.Item>
-          </Col>
-          <Col :span="12">
-            <Form.Item label="账号类型" name="accountType">
-              <Select
-                v-model:value="formState.accountType"
-                :options="accountTypeOptions"
-              />
-            </Form.Item>
-          </Col>
-          <Col :span="12">
-            <Form.Item label="邮箱" name="email">
-              <Input v-model:value="formState.email" allow-clear />
-            </Form.Item>
-          </Col>
-          <Col :span="12">
-            <Form.Item label="排序" name="orderNo">
-              <InputNumber
-                v-model:value="formState.orderNo"
-                class="w-full"
-                :min="0"
-              />
-            </Form.Item>
-          </Col>
-          <Col :span="12">
-            <Form.Item label="域账号" name="domainAccount">
-              <Input v-model:value="formState.domainAccount" allow-clear />
-            </Form.Item>
-          </Col>
-        </Row>
+            <Divider orientation="left">基础信息</Divider>
+            <Row :gutter="16">
+              <Col :span="12">
+                <Form.Item label="账号名称" name="account">
+                  <Input
+                    v-model:value="formState.account"
+                    :disabled="!!formState.id"
+                    allow-clear
+                  />
+                </Form.Item>
+              </Col>
+              <Col :span="12">
+                <Form.Item label="真实姓名" name="realName">
+                  <Input v-model:value="formState.realName" allow-clear />
+                </Form.Item>
+              </Col>
+              <Col :span="12">
+                <Form.Item label="手机号" name="phone">
+                  <Input v-model:value="formState.phone" allow-clear />
+                </Form.Item>
+              </Col>
+              <Col :span="12">
+                <Form.Item label="昵称" name="nickName">
+                  <Input v-model:value="formState.nickName" allow-clear />
+                </Form.Item>
+              </Col>
+              <Col :span="12">
+                <Form.Item label="账号类型" name="accountType">
+                  <Select
+                    v-model:value="formState.accountType"
+                    :options="accountTypeOptions"
+                  />
+                </Form.Item>
+              </Col>
+              <Col :span="12">
+                <Form.Item label="邮箱" name="email">
+                  <Input v-model:value="formState.email" allow-clear />
+                </Form.Item>
+              </Col>
+              <Col :span="12">
+                <Form.Item label="排序" name="orderNo">
+                  <InputNumber
+                    v-model:value="formState.orderNo"
+                    class="w-full"
+                    :min="0"
+                  />
+                </Form.Item>
+              </Col>
+              <Col :span="12">
+                <Form.Item label="域账号" name="domainAccount">
+                  <Input v-model:value="formState.domainAccount" allow-clear />
+                </Form.Item>
+              </Col>
+            </Row>
 
-        <Divider orientation="left">机构角色</Divider>
-        <Row :gutter="16">
-          <Col :span="12">
-            <Form.Item label="所属机构" name="orgId">
-              <TreeSelect
-                v-model:value="formState.orgId"
-                :tree-data="orgTreeData"
-                allow-clear
-                class="w-full"
-                show-search
-                tree-default-expand-all
-              />
-            </Form.Item>
-          </Col>
-          <Col :span="12">
-            <Form.Item label="职位" name="posId">
-              <Select
-                v-model:value="formState.posId"
-                :loading="optionLoading"
-                :options="posOptions"
-                allow-clear
-              />
-            </Form.Item>
-          </Col>
-          <Col :span="12">
-            <Form.Item label="工号" name="jobNum">
-              <Input v-model:value="formState.jobNum" allow-clear />
-            </Form.Item>
-          </Col>
-          <Col :span="12">
-            <Form.Item label="状态" name="status">
-              <Switch
-                v-model:checked="formState.status"
-                :checked-value="ENABLED"
-                :un-checked-value="DISABLED"
-              />
-            </Form.Item>
-          </Col>
-        </Row>
+            <Divider orientation="left">机构角色</Divider>
+            <Row :gutter="16">
+              <Col :span="12">
+                <Form.Item label="所属机构" name="orgId">
+                  <TreeSelect
+                    v-model:value="formState.orgId"
+                    :tree-data="orgTreeData"
+                    allow-clear
+                    class="w-full"
+                    show-search
+                    tree-default-expand-all
+                  />
+                </Form.Item>
+              </Col>
+              <Col :span="12">
+                <Form.Item label="职位" name="posId">
+                  <Select
+                    v-model:value="formState.posId"
+                    :loading="optionLoading"
+                    :options="posOptions"
+                    allow-clear
+                  />
+                </Form.Item>
+              </Col>
+              <Col :span="12">
+                <Form.Item label="工号" name="jobNum">
+                  <Input v-model:value="formState.jobNum" allow-clear />
+                </Form.Item>
+              </Col>
+              <Col :span="12">
+                <Form.Item label="状态" name="status">
+                  <Switch
+                    v-model:checked="formState.status"
+                    :checked-value="ENABLED"
+                    :un-checked-value="DISABLED"
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
 
-        <Divider orientation="left">附属机构</Divider>
-        <div class="ext-toolbar">
-          <Button size="small" type="primary" @click="addExtOrgRow">
-            <template #icon>
-              <IconifyIcon icon="lucide:plus" />
-            </template>
-            添加附属机构
-          </Button>
-        </div>
-        <template v-if="formState.extOrgIdList?.length">
-          <Row
-            v-for="(item, index) in formState.extOrgIdList"
-            :key="index"
-            :gutter="12"
-            class="ext-row"
-          >
-            <Col :span="11">
-              <TreeSelect
-                v-model:value="item.orgId"
-                :tree-data="orgTreeData"
-                allow-clear
-                class="w-full"
-                placeholder="机构"
-                show-search
-                tree-default-expand-all
-              />
-            </Col>
-            <Col :span="10">
-              <Select
-                v-model:value="item.posId"
-                :options="posOptions"
-                allow-clear
-                placeholder="职位"
-              />
-            </Col>
-            <Col :span="3">
-              <Button danger block @click="removeExtOrgRow(index)">
+            <Divider orientation="left">附属机构</Divider>
+            <div class="ext-toolbar">
+              <Button size="small" type="primary" @click="addExtOrgRow">
                 <template #icon>
-                  <IconifyIcon icon="lucide:trash-2" />
+                  <IconifyIcon icon="lucide:plus" />
                 </template>
+                添加附属机构
               </Button>
-            </Col>
-          </Row>
-        </template>
-        <Empty v-else :image="Empty.PRESENTED_IMAGE_SIMPLE" />
+            </div>
+            <template v-if="formState.extOrgIdList?.length">
+              <Row
+                v-for="(item, index) in formState.extOrgIdList"
+                :key="index"
+                :gutter="12"
+                class="ext-row"
+              >
+                <Col :span="11">
+                  <TreeSelect
+                    v-model:value="item.orgId"
+                    :tree-data="orgTreeData"
+                    allow-clear
+                    class="w-full"
+                    placeholder="机构"
+                    show-search
+                    tree-default-expand-all
+                  />
+                </Col>
+                <Col :span="10">
+                  <Select
+                    v-model:value="item.posId"
+                    :options="posOptions"
+                    allow-clear
+                    placeholder="职位"
+                  />
+                </Col>
+                <Col :span="3">
+                  <Button danger block @click="removeExtOrgRow(index)">
+                    <template #icon>
+                      <IconifyIcon icon="lucide:trash-2" />
+                    </template>
+                  </Button>
+                </Col>
+              </Row>
+            </template>
+            <Empty v-else :image="Empty.PRESENTED_IMAGE_SIMPLE" />
           </Tabs.TabPane>
 
           <Tabs.TabPane key="roles" tab="角色授权">
@@ -1250,51 +1314,67 @@ watch(orgFilterText, (value) => {
 
       <template #footer>
         <Space>
-          <Button @click="drawerOpen = false">取消</Button>
+          <Button @click="editorOpen = false">取消</Button>
           <Button :loading="submitLoading" type="primary" @click="submitUser">
             保存
           </Button>
         </Space>
       </template>
-    </Drawer>
+    </Modal>
   </div>
 </template>
 
 <style scoped>
 .adminnet-user-page {
   display: flex;
-  min-height: 100%;
   flex-direction: column;
   gap: 12px;
+  min-height: 100%;
   padding: 12px;
 }
 
 .query-panel,
 .org-panel,
 .table-panel {
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border));
   border-radius: 8px;
-  background: hsl(var(--background));
 }
 
 .query-panel {
   padding: 12px 12px 0;
 }
 
+.user-editor-form :deep(.ant-form-item) {
+  margin-bottom: 12px;
+}
+
+.user-editor-form :deep(.ant-divider-horizontal) {
+  margin: 12px 0;
+}
+
+.user-editor-form :deep(.ant-tabs-nav) {
+  margin-bottom: 10px;
+}
+
+.user-editor-form :deep(.ant-empty-normal) {
+  margin-block: 10px;
+}
+
 .content-grid {
   display: grid;
-  min-height: 0;
   flex: 1;
   grid-template-columns: minmax(236px, 292px) minmax(0, 1fr);
   gap: 12px;
+  min-height: 0;
 }
 
 .org-panel {
   display: flex;
-  min-height: 520px;
   flex-direction: column;
-  overflow: auto;
+  min-height: 520px;
   padding: 10px;
+  overflow: auto;
 }
 
 .org-panel-head {
@@ -1305,20 +1385,20 @@ watch(orgFilterText, (value) => {
 }
 
 .org-panel-title {
-  color: hsl(var(--foreground));
   font-size: 14px;
   font-weight: 650;
+  color: hsl(var(--foreground));
 }
 
 .org-panel-subtitle {
   margin-top: 2px;
-  color: hsl(var(--muted-foreground));
   font-size: 12px;
+  color: hsl(var(--muted-foreground));
 }
 
 .tenant-select {
-  margin-bottom: 10px;
   width: 100%;
+  margin-bottom: 10px;
 }
 
 .org-toolbar {
@@ -1329,8 +1409,8 @@ watch(orgFilterText, (value) => {
 }
 
 .org-more-button {
-  height: 32px;
   width: 34px;
+  height: 32px;
   color: hsl(var(--muted-foreground));
 }
 
@@ -1338,45 +1418,45 @@ watch(orgFilterText, (value) => {
   flex: 1;
   min-height: 0;
   padding: 6px;
-  border: 1px solid hsl(var(--border) / 70%);
-  border-radius: 8px;
   background:
     linear-gradient(180deg, hsl(var(--muted) / 25%), transparent 52px),
     hsl(var(--background));
+  border: 1px solid hsl(var(--border) / 70%);
+  border-radius: 8px;
 }
 
 .org-tree-shell.is-loading {
-  opacity: 0.62;
   pointer-events: none;
+  opacity: 0.62;
 }
 
 .org-tree-node {
   display: flex;
-  min-width: 0;
-  align-items: center;
   gap: 8px;
-  color: hsl(var(--foreground));
+  align-items: center;
+  min-width: 0;
   font-size: 13px;
   font-weight: 500;
   line-height: 30px;
+  color: hsl(var(--foreground));
 }
 
 .org-tree-node-icon-wrap {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
   flex: none;
   align-items: center;
   justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border));
   border-radius: 6px;
-  background: hsl(var(--background));
 }
 
 .org-tree-node-icon {
+  flex: none;
   width: 14px;
   height: 14px;
-  flex: none;
   color: hsl(var(--muted-foreground));
 }
 
@@ -1441,8 +1521,8 @@ watch(orgFilterText, (value) => {
 }
 
 :deep(.ant-tree .ant-tree-node-content-wrapper) {
-  min-width: 0;
   flex: 1;
+  min-width: 0;
   height: 32px;
   padding-inline: 5px 8px;
   border-radius: 8px;
@@ -1467,8 +1547,8 @@ watch(orgFilterText, (value) => {
 }
 
 :deep(.ant-tree .ant-tree-node-selected .org-tree-node-icon-wrap) {
-  border-color: hsl(var(--primary) / 35%);
   background: hsl(var(--primary) / 10%);
+  border-color: hsl(var(--primary) / 35%);
 }
 
 :deep(.ant-tree .ant-tree-switcher) {
@@ -1495,35 +1575,35 @@ watch(orgFilterText, (value) => {
 
 .org-command-list {
   display: grid;
-  min-width: 128px;
   gap: 2px;
+  min-width: 128px;
 }
 
 .org-command-item {
   display: inline-flex;
-  height: 32px;
-  align-items: center;
   gap: 8px;
+  align-items: center;
+  height: 32px;
   padding: 0 9px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: hsl(var(--foreground));
-  cursor: pointer;
   font-size: 13px;
   font-weight: 500;
+  color: hsl(var(--foreground));
   text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
 }
 
 .org-command-item:hover {
-  background: hsl(var(--primary) / 8%);
   color: hsl(var(--primary));
+  background: hsl(var(--primary) / 8%);
 }
 
 .org-command-icon {
   width: 14px;
   height: 14px;
-  color: currentColor;
+  color: currentcolor;
 }
 
 @media (max-width: 900px) {

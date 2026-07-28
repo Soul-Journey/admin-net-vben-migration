@@ -8,29 +8,39 @@ namespace Admin.NET.Core.Service;
 
 public class DbTableInput
 {
+    [Required, MaxLength(64)]
     public string ConfigId { get; set; }
 
+    [Required, MaxLength(128)]
     public string TableName { get; set; }
 
+    [MaxLength(256)]
     public string Description { get; set; }
 
+    [Required(ErrorMessage = "至少需要一个字段")]
     public List<DbColumnInput> DbColumnInfoList { get; set; }
 }
 
 public class UpdateDbTableInput
 {
+    [Required, MaxLength(64)]
     public string ConfigId { get; set; }
 
+    [Required, MaxLength(128)]
     public string TableName { get; set; }
 
+    [Required, MaxLength(128)]
     public string OldTableName { get; set; }
 
+    [MaxLength(256)]
     public string Description { get; set; }
 }
 
 public class DeleteDbTableInput
 {
+    [Required, MaxLength(64)]
     public string ConfigId { get; set; }
 
+    [Required, MaxLength(128)]
     public string TableName { get; set; }
 }

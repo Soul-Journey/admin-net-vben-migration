@@ -25,3 +25,23 @@ public class BackupOutput
     /// </summary>
     public DateTime CreateTime { get; set; }
 }
+
+/// <summary>
+/// 系统更新配置状态（不包含令牌和部署目录等敏感值）
+/// </summary>
+public class UpdateConfigurationStatusOutput
+{
+    public bool Enabled { get; set; }
+    public bool AccessTokenConfigured { get; set; }
+    public bool BackendOutputConfigured { get; set; }
+    public bool BackendOutputExists { get; set; }
+    public bool PublishConfigured { get; set; }
+    public bool ReadyForUpdate { get; set; }
+    public bool ReadyForRestore { get; set; }
+    public string Repository { get; set; }
+    public string Branch { get; set; }
+    public string TargetFramework { get; set; }
+    public string RuntimeIdentifier { get; set; }
+    public int UpdateInterval { get; set; }
+    public int BackupCount { get; set; }
+}

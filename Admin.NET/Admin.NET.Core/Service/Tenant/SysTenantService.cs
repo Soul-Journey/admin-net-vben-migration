@@ -486,10 +486,13 @@ public class SysTenantService : IDynamicApiController, ITransient
     [DisplayName("授权租户菜单")]
     public async Task GrantMenu(TenantMenuInput input)
     {
+        input.MenuIdList = input.MenuIdList.Distinct().ToList();
+
         // 获取需要授权的菜单列表
         var menuList = await _sysTenantRep.Context.Queryable<SysMenu>()
             .Where(u => input.MenuIdList.Contains(u.Id))
             .InnerJoin<SysTenantMenu>((u, t) => t.TenantId == input.Id && u.Id == t.MenuId)
+            .Distinct()
             .ToListAsync();
 
         // 检查是否存在重复菜单
@@ -525,7 +528,7 @@ public class SysTenantService : IDynamicApiController, ITransient
     [DisplayName("获取租户菜单Id集合")]
     public async Task<List<long>> GetTenantMenuList([FromQuery] BaseIdInput input)
     {
-        var menuIds = await _sysTenantMenuRep.AsQueryable().Where(u => u.TenantId == input.Id).Select(u => u.MenuId).ToListAsync();
+        var menuIds = await _sysTenantMenuRep.AsQueryable().Where(u => u.TenantId == input.Id).Select(u => u.MenuId).Distinct().ToListAsync();
         return await SysMenuService.ExcludeParentMenuOfFullySelected(menuIds);
     }
 

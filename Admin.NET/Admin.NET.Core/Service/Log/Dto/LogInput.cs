@@ -67,6 +67,11 @@ public class PageLogInput : BasePageInput
 public class LogInput
 {
     /// <summary>
+    /// 租户Id（仅超级管理员选择范围时使用）
+    /// </summary>
+    public long TenantId { get; set; }
+
+    /// <summary>
     /// 开始时间
     /// </summary>
     public DateTime? StartTime { get; set; }

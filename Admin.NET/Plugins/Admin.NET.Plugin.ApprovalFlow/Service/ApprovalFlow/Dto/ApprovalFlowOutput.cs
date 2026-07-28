@@ -37,6 +37,11 @@ public class ApprovalFlowOutput
     public string? FlowJson { get; set; }
 
     /// <summary>
+    /// 状态
+    /// </summary>
+    public int? Status { get; set; }
+
+    /// <summary>
     /// 备注
     /// </summary>
     public string? Remark { get; set; }

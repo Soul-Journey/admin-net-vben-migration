@@ -30,36 +30,42 @@ public class InfoSaveInput
     /// 系统主标题
     /// </summary>
     [Required(ErrorMessage = "系统主标题不能为空")]
+    [MaxLength(32)]
     public string Title { get; set; }
 
     /// <summary>
     /// 系统副标题
     /// </summary>
     [Required(ErrorMessage = "系统副标题不能为空")]
+    [MaxLength(32)]
     public string ViceTitle { get; set; }
 
     /// <summary>
     /// 系统描述
     /// </summary>
     [Required(ErrorMessage = "系统描述不能为空")]
+    [MaxLength(64)]
     public string ViceDesc { get; set; }
 
     /// <summary>
     /// 版权说明
     /// </summary>
     [Required(ErrorMessage = "版权说明不能为空")]
+    [MaxLength(64)]
     public string Copyright { get; set; }
 
     /// <summary>
     /// ICP备案号
     /// </summary>
     [Required(ErrorMessage = "ICP备案号不能为空")]
+    [MaxLength(32)]
     public string Icp { get; set; }
 
     /// <summary>
     /// ICP地址
     /// </summary>
     [Required(ErrorMessage = "ICP地址不能为空")]
+    [MaxLength(32)]
     public string IcpUrl { get; set; }
 
     /// <summary>

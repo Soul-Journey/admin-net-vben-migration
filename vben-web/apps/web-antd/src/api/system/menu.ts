@@ -92,7 +92,9 @@ function normalizeMenu(item: unknown): SysMenuRecord {
     children: normalizedChildren,
     component: toStringValue(record.component ?? record.Component),
     createTime: toStringValue(record.createTime ?? record.CreateTime),
-    createUserName: toStringValue(record.createUserName ?? record.CreateUserName),
+    createUserName: toStringValue(
+      record.createUserName ?? record.CreateUserName,
+    ),
     icon: toStringValue(record.icon ?? record.Icon),
     id: toNumber(record.id ?? record.Id) ?? 0,
     isAffix: toBoolean(record.isAffix ?? record.IsAffix),
@@ -112,7 +114,9 @@ function normalizeMenu(item: unknown): SysMenuRecord {
     title: toStringValue(record.title ?? record.Title) ?? '',
     type: toNumber(record.type ?? record.Type),
     updateTime: toStringValue(record.updateTime ?? record.UpdateTime),
-    updateUserName: toStringValue(record.updateUserName ?? record.UpdateUserName),
+    updateUserName: toStringValue(
+      record.updateUserName ?? record.UpdateUserName,
+    ),
   };
 }
 

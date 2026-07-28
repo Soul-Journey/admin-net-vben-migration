@@ -105,7 +105,9 @@ function normalizeTenant(item: unknown): SysTenantRecord {
     connection: toStringValue(record.connection ?? record.Connection),
     copyright: toStringValue(record.copyright ?? record.Copyright),
     createTime: toStringValue(record.createTime ?? record.CreateTime),
-    createUserName: toStringValue(record.createUserName ?? record.CreateUserName),
+    createUserName: toStringValue(
+      record.createUserName ?? record.CreateUserName,
+    ),
     dbType: toNumber(record.dbType ?? record.DbType),
     email: toStringValue(record.email ?? record.Email),
     enableReg: toNumber(record.enableReg ?? record.EnableReg),
@@ -126,7 +128,9 @@ function normalizeTenant(item: unknown): SysTenantRecord {
     tenantType: toNumber(record.tenantType ?? record.TenantType),
     title: toStringValue(record.title ?? record.Title),
     updateTime: toStringValue(record.updateTime ?? record.UpdateTime),
-    updateUserName: toStringValue(record.updateUserName ?? record.UpdateUserName),
+    updateUserName: toStringValue(
+      record.updateUserName ?? record.UpdateUserName,
+    ),
     userId: toNumber(record.userId ?? record.UserId),
     viceDesc: toStringValue(record.viceDesc ?? record.ViceDesc),
     viceTitle: toStringValue(record.viceTitle ?? record.ViceTitle),
@@ -198,18 +202,27 @@ export function grantTenantMenuApi(params: GrantTenantMenuParams) {
 }
 
 export function changeTenantApi(id: number) {
-  return requestClient.post<TenantLoginResult>('/sysTenant/changeTenant', { id });
+  return requestClient.post<TenantLoginResult>('/sysTenant/changeTenant', {
+    id,
+  });
 }
 
 export function goTenantApi(id: number) {
   return requestClient.post<TenantLoginResult>('/sysTenant/goTenant', { id });
 }
 
-export async function listUserRegWaysApi(params: {
-  keyword?: string;
-  name?: string;
-  tenantId?: number;
-} = {}) {
-  const data = await requestClient.post<unknown[]>('/sysUserRegWay/list', params);
-  return Array.isArray(data) ? data.map((item) => normalizeUserRegWay(item)) : [];
+export async function listUserRegWaysApi(
+  params: {
+    keyword?: string;
+    name?: string;
+    tenantId?: number;
+  } = {},
+) {
+  const data = await requestClient.post<unknown[]>(
+    '/sysUserRegWay/list',
+    params,
+  );
+  return Array.isArray(data)
+    ? data.map((item) => normalizeUserRegWay(item))
+    : [];
 }

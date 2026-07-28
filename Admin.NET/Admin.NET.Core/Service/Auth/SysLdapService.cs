@@ -37,13 +37,33 @@ public class SysLdapService : IDynamicApiController, ITransient
     /// <param name="input"></param>
     /// <returns></returns>
     [DisplayName("获取系统域登录配置分页列表")]
-    public async Task<SqlSugarPagedList<SysLdap>> Page(SysLdapInput input)
+    public async Task<SqlSugarPagedList<SysLdapOutput>> Page(SysLdapInput input)
     {
         return await _sysLdapRep.AsQueryable()
             .WhereIF(_userManager.SuperAdmin && input.TenantId > 0, u => u.TenantId == input.TenantId)
             .WhereIF(!string.IsNullOrWhiteSpace(input.Keyword), u => u.Host.Contains(input.Keyword.Trim()))
             .WhereIF(!string.IsNullOrWhiteSpace(input.Host), u => u.Host.Contains(input.Host.Trim()))
             .OrderBy(u => u.CreateTime, OrderByType.Desc)
+            .Select(u => new SysLdapOutput
+            {
+                Id = u.Id,
+                TenantId = u.TenantId,
+                Host = u.Host,
+                Port = u.Port,
+                BaseDn = u.BaseDn,
+                BindDn = u.BindDn,
+                HasBindPass = u.BindPass != null && u.BindPass != string.Empty,
+                AuthFilter = u.AuthFilter,
+                Version = u.Version,
+                BindAttrAccount = u.BindAttrAccount,
+                BindAttrEmployeeId = u.BindAttrEmployeeId,
+                BindAttrCode = u.BindAttrCode,
+                Status = u.Status,
+                CreateTime = u.CreateTime,
+                UpdateTime = u.UpdateTime,
+                CreateUserName = u.CreateUserName,
+                UpdateUserName = u.UpdateUserName,
+            })
             .ToPagedListAsync(input.Page, input.PageSize);
     }
 
@@ -56,7 +76,13 @@ public class SysLdapService : IDynamicApiController, ITransient
     [DisplayName("增加系统域登录配置")]
     public async Task<long> Add(AddSysLdapInput input)
     {
+        var tenantId = _userManager.SuperAdmin ? input.TenantId : _userManager.TenantId;
+        if (tenantId <= 0) throw Oops.Oh("请选择租户");
+        if (await _sysLdapRep.AsQueryable().ClearFilter().AnyAsync(u => u.TenantId == tenantId && u.IsDelete == false))
+            throw Oops.Oh("该租户已存在 AD 域配置");
+
         var entity = input.Adapt<SysLdap>();
+        entity.TenantId = tenantId;
         entity.BindPass = CryptogramUtil.Encrypt(input.BindPass);
         await _sysLdapRep.InsertAsync(entity);
         return entity.Id;
@@ -71,13 +97,35 @@ public class SysLdapService : IDynamicApiController, ITransient
     [DisplayName("更新系统域登录配置")]
     public async Task Update(UpdateSysLdapInput input)
     {
-        var entity = input.Adapt<SysLdap>();
-        if (!string.IsNullOrEmpty(input.BindPass) && input.BindPass.Length < 32)
-        {
-            entity.BindPass = CryptogramUtil.Encrypt(input.BindPass); // 加密
-        }
+        var entity = await _sysLdapRep.AsQueryable().ClearFilter().FirstAsync(u => u.Id == input.Id && u.IsDelete == false)
+            ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+        if (!_userManager.SuperAdmin && entity.TenantId != _userManager.TenantId)
+            throw Oops.Oh(ErrorCodeEnum.D1002);
 
-        await _sysLdapRep.AsUpdateable(entity).IgnoreColumns(ignoreAllNullColumns: true).ExecuteCommandAsync();
+        var tenantId = entity.TenantId;
+        var encryptedPassword = entity.BindPass;
+        input.Adapt(entity);
+        entity.TenantId = tenantId;
+        entity.BindPass = string.IsNullOrWhiteSpace(input.BindPass)
+            ? encryptedPassword
+            : CryptogramUtil.Encrypt(input.BindPass);
+
+        await _sysLdapRep.AsUpdateable(entity)
+            .UpdateColumns(u => new
+            {
+                u.Host,
+                u.Port,
+                u.BaseDn,
+                u.BindDn,
+                u.BindPass,
+                u.AuthFilter,
+                u.Version,
+                u.BindAttrAccount,
+                u.BindAttrEmployeeId,
+                u.BindAttrCode,
+                u.Status,
+            })
+            .ExecuteCommandAsync();
     }
 
     /// <summary>
@@ -89,7 +137,7 @@ public class SysLdapService : IDynamicApiController, ITransient
     [DisplayName("删除系统域登录配置")]
     public async Task Delete(DeleteSysLdapInput input)
     {
-        var entity = await _sysLdapRep.GetFirstAsync(u => u.Id == input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+        var entity = await GetAccessibleConfig(input.Id);
         await _sysLdapRep.FakeDeleteAsync(entity); // 假删除
         //await _rep.DeleteAsync(entity); // 真删除
     }
@@ -100,9 +148,10 @@ public class SysLdapService : IDynamicApiController, ITransient
     /// <param name="input"></param>
     /// <returns></returns>
     [DisplayName("获取系统域登录配置详情")]
-    public async Task<SysLdap> GetDetail([FromQuery] DetailSysLdapInput input)
+    public async Task<SysLdapOutput> GetDetail([FromQuery] DetailSysLdapInput input)
     {
-        return await _sysLdapRep.GetFirstAsync(u => u.Id == input.Id);
+        var entity = await GetAccessibleConfig(input.Id);
+        return ToOutput(entity);
     }
 
     /// <summary>
@@ -110,9 +159,10 @@ public class SysLdapService : IDynamicApiController, ITransient
     /// </summary>
     /// <returns></returns>
     [DisplayName("获取系统域登录配置列表")]
-    public async Task<List<SysLdap>> GetList()
+    public async Task<List<SysLdapOutput>> GetList()
     {
-        return await _sysLdapRep.AsQueryable().Select<SysLdap>().ToListAsync();
+        var entities = await _sysLdapRep.AsQueryable().ToListAsync();
+        return entities.Select(ToOutput).ToList();
     }
 
     /// <summary>
@@ -183,10 +233,12 @@ public class SysLdapService : IDynamicApiController, ITransient
     /// <param name="input"></param>
     /// <returns></returns>
     [DisplayName("同步域用户")]
-    public async Task<List<SysUserLdap>> SyncUser(SyncSysLdapInput input)
+    [UnitOfWork]
+    public async Task<SyncLdapResult> SyncUser(SyncSysLdapInput input)
     {
-        var sysLdap = await _sysLdapRep.GetByIdAsync(input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
-        return await SyncUser(sysLdap);
+        var sysLdap = await GetAccessibleConfig(input.Id);
+        var users = await SyncUser(sysLdap) ?? new List<SysUserLdap>();
+        return new SyncLdapResult { Added = users.Count, Total = users.Count };
     }
 
     /// <summary>
@@ -233,7 +285,12 @@ public class SysLdapService : IDynamicApiController, ITransient
                 }
             }
 
-            if (userLdapList.Count == 0) return null;
+            userLdapList = userLdapList
+                .Where(u => !string.IsNullOrWhiteSpace(u.Account))
+                .GroupBy(u => u.Account, StringComparer.OrdinalIgnoreCase)
+                .Select(u => u.First())
+                .ToList();
+            if (userLdapList.Count == 0) return new List<SysUserLdap>();
 
             await _sysUserLdapService.InsertUserLdapList(sysLdap.TenantId!.Value, userLdapList);
             return userLdapList;
@@ -339,9 +396,10 @@ public class SysLdapService : IDynamicApiController, ITransient
     /// <param name="input"></param>
     /// <returns></returns>
     [DisplayName("同步域组织")]
-    public async Task SyncDept(SyncSysLdapInput input)
+    [UnitOfWork]
+    public async Task<SyncLdapResult> SyncDept(SyncSysLdapInput input)
     {
-        var sysLdap = await _sysLdapRep.GetFirstAsync(u => u.Id == input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+        var sysLdap = await GetAccessibleConfig(input.Id);
         var ldapConn = new LdapConnection();
         try
         {
@@ -373,9 +431,9 @@ public class SysLdapService : IDynamicApiController, ITransient
             }
 
             if (orgList.Count == 0)
-                return;
+                return new SyncLdapResult();
 
-            await _sysOrgService.BatchAddOrgs(orgList);
+            return await _sysOrgService.BatchAddOrgs(sysLdap.TenantId!.Value, orgList);
         }
         catch (LdapException e)
         {
@@ -443,6 +501,42 @@ public class SysLdapService : IDynamicApiController, ITransient
             Level = org.Level + 1,
             Name = attrs.ContainsKey(sysLdap.BindAttrAccount) ? attrs.GetAttribute(sysLdap.BindAttrAccount)?.StringValue : null,
             OrderNo = listOrgs.Count + 1,
+        };
+    }
+
+    [NonAction]
+    private async Task<SysLdap> GetAccessibleConfig(long id)
+    {
+        var entity = await _sysLdapRep.AsQueryable().ClearFilter()
+            .FirstAsync(u => u.Id == id && u.IsDelete == false)
+            ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+        if (!_userManager.SuperAdmin && entity.TenantId != _userManager.TenantId)
+            throw Oops.Oh(ErrorCodeEnum.D1002);
+        return entity;
+    }
+
+    [NonAction]
+    private static SysLdapOutput ToOutput(SysLdap entity)
+    {
+        return new SysLdapOutput
+        {
+            Id = entity.Id,
+            TenantId = entity.TenantId,
+            Host = entity.Host,
+            Port = entity.Port,
+            BaseDn = entity.BaseDn,
+            BindDn = entity.BindDn,
+            HasBindPass = !string.IsNullOrWhiteSpace(entity.BindPass),
+            AuthFilter = entity.AuthFilter,
+            Version = entity.Version,
+            BindAttrAccount = entity.BindAttrAccount,
+            BindAttrEmployeeId = entity.BindAttrEmployeeId,
+            BindAttrCode = entity.BindAttrCode,
+            Status = entity.Status,
+            CreateTime = entity.CreateTime,
+            UpdateTime = entity.UpdateTime,
+            CreateUserName = entity.CreateUserName,
+            UpdateUserName = entity.UpdateUserName,
         };
     }
 }

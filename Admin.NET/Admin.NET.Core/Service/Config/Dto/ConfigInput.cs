@@ -40,6 +40,23 @@ public class DeleteConfigInput : BaseIdInput
 {
 }
 
+public class ConfigOutput
+{
+    public long Id { get; set; }
+    public string Name { get; set; }
+    public string? Code { get; set; }
+    public string? Value { get; set; }
+    public bool IsSensitive { get; set; }
+    public YesNoEnum SysFlag { get; set; }
+    public string? GroupCode { get; set; }
+    public int OrderNo { get; set; }
+    public string? Remark { get; set; }
+    public DateTime CreateTime { get; set; }
+    public DateTime? UpdateTime { get; set; }
+    public string? CreateUserName { get; set; }
+    public string? UpdateUserName { get; set; }
+}
+
 /// <summary>
 /// 批量配置参数输入
 /// </summary>

@@ -12,8 +12,11 @@ namespace Admin.NET.Core.Service;
 [ApiDescriptionSettings(Order = 290)]
 public class SysServerService : IDynamicApiController, ITransient
 {
-    public SysServerService()
+    private readonly UserManager _userManager;
+
+    public SysServerService(UserManager userManager)
     {
+        _userManager = userManager;
     }
 
     /// <summary>
@@ -21,8 +24,10 @@ public class SysServerService : IDynamicApiController, ITransient
     /// </summary>
     /// <returns></returns>
     [DisplayName("获取服务器配置信息")]
-    public dynamic GetServerBase()
+    public async Task<dynamic> GetServerBase()
     {
+        EnsureSystemAdmin();
+        var localIpAddress = App.HttpContext?.Connection.LocalIpAddress;
         return new
         {
             HostName = Environment.MachineName, // 主机名称
@@ -30,8 +35,12 @@ public class SysServerService : IDynamicApiController, ITransient
             OsArchitecture = Environment.OSVersion.Platform.ToString() + " " + RuntimeInformation.OSArchitecture.ToString(), // 系统架构
             ProcessorCount = Environment.ProcessorCount + " 核", // CPU核心数
             SysRunTime = ComputerUtil.GetRunTime(), // 系统运行时间
-            RemoteIp = ComputerUtil.GetIpFromOnline(), // 外网地址
-            LocalIp = App.HttpContext?.Connection.LocalIpAddress!.MapToIPv4().ToString(), // 本地地址
+            RemoteIp = await ComputerUtil.GetIpFromOnlineAsync(), // 外网地址
+            LocalIp = localIpAddress == null
+                ? "未知"
+                : System.Net.IPAddress.IsLoopback(localIpAddress)
+                    ? "127.0.0.1"
+                    : localIpAddress.MapToIPv4().ToString(), // 本地地址
             RuntimeInformation.FrameworkDescription, // NET框架
             Environment = App.HostEnvironment.IsDevelopment() ? "Development" : "Production",
             Wwwroot = App.WebHostEnvironment.WebRootPath, // 网站根目录
@@ -46,6 +55,7 @@ public class SysServerService : IDynamicApiController, ITransient
     [DisplayName("获取服务器使用信息")]
     public dynamic GetServerUsed()
     {
+        EnsureSystemAdmin();
         var programStartTime = Process.GetCurrentProcess().StartTime;
         var totalMilliseconds = (DateTime.Now - programStartTime).TotalMilliseconds.ToString();
         var ts = totalMilliseconds.Contains('.') ? totalMilliseconds.Split('.')[0] : totalMilliseconds;
@@ -71,6 +81,7 @@ public class SysServerService : IDynamicApiController, ITransient
     [DisplayName("获取服务器磁盘信息")]
     public dynamic GetServerDisk()
     {
+        EnsureSystemAdmin();
         return ComputerUtil.GetDiskInfos();
     }
 
@@ -81,6 +92,7 @@ public class SysServerService : IDynamicApiController, ITransient
     [DisplayName("获取框架主要程序集")]
     public dynamic GetAssemblyList()
     {
+        EnsureSystemAdmin();
         var furionAssembly = typeof(App).Assembly.GetName();
         var sqlSugarAssembly = typeof(ISqlSugarClient).Assembly.GetName();
         var yitIdAssembly = typeof(YitIdHelper).Assembly.GetName();
@@ -141,5 +153,11 @@ public class SysServerService : IDynamicApiController, ITransient
             new { hashidsAssembly.Name, hashidsAssembly.Version },
             new { sftpClientAssembly.Name, sftpClientAssembly.Version },
         };
+    }
+
+    private void EnsureSystemAdmin()
+    {
+        if (!_userManager.SuperAdmin && !_userManager.SysAdmin)
+            throw Oops.Oh("仅超级管理员或系统管理员可查看服务器信息");
     }
 }

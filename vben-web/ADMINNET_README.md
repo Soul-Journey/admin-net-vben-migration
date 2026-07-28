@@ -1,8 +1,6 @@
 # Admin.NET Vben Web
 
-This directory is the new Vben 5 + Ant Design Vue frontend for Admin.NET.
-The original Admin.NET `Web` directory remains unchanged and can be used as the
-fallback UI during migration.
+This directory is the new Vben 5 + Ant Design Vue frontend for Admin.NET. The original Admin.NET `Web` directory remains unchanged and can be used as the fallback UI during migration.
 
 ## Requirements
 
@@ -21,17 +19,13 @@ pnpm build
 pnpm test:unit
 ```
 
-The development proxy defaults to `http://localhost:5005/api`. Override it with
-`VITE_PROXY_TARGET` in `apps/web-antd/.env.development` when your Admin.NET API
-uses a different port.
+The development proxy defaults to `http://localhost:5005/api`. Override it with `VITE_PROXY_TARGET` in `apps/web-antd/.env.development` when your Admin.NET API uses a different port.
 
 ## Migration status
 
 - Auth, user info, button permissions, and backend menus are wired to Admin.NET.
 - Admin.NET menu components are converted through a safe allowlist.
 - Unported pages render `views/adminnet/legacy-placeholder.vue`.
-- The seeded Admin.NET home route `/dashboard/home` maps to Vben's workspace
-  dashboard.
+- The seeded Admin.NET home route `/dashboard/home` maps to Vben's workspace dashboard.
 
-使用 `docs/adminnet/active-migration-plan.md` 作为当前迁移执行计划和进度总控台。页面迁移清单见
-`docs/adminnet/migration-inventory.md`。
+使用 `docs/adminnet/active-migration-plan.md` 作为当前迁移执行计划和进度总控台。页面迁移清单见 `docs/adminnet/migration-inventory.md`。

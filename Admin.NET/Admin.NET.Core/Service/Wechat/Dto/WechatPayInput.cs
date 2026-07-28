@@ -16,26 +16,32 @@ public class WechatPayTransactionInput
     /// <summary>
     /// 订单金额
     /// </summary>
+    [Range(1, int.MaxValue)]
     public int Total { get; set; }
 
     /// <summary>
     /// 商品描述
     /// </summary>
+    [Required]
+    [MaxLength(127)]
     public string Description { get; set; }
 
     /// <summary>
     /// 附加数据
     /// </summary>
+    [MaxLength(127)]
     public string Attachment { get; set; }
 
     /// <summary>
     /// 优惠标记
     /// </summary>
+    [MaxLength(32)]
     public string GoodsTag { get; set; }
 
     /// <summary>
     /// 业务标签，用来区分做什么业务
     /// </summary>
+    [MaxLength(64)]
     public string Tags { get; set; }
 
     /// <summary>
@@ -63,12 +69,15 @@ public class WechatPayRefundDomesticInput
     /// <summary>
     /// 退款原因
     /// </summary>
+    [Required]
+    [MaxLength(80)]
     public string Reason { get; set; }
 
     /// <summary>
     /// 退款金额
     /// </summary>
     [Required]
+    [Range(1, int.MaxValue)]
     public int Refund { get; set; }
 
     /// <summary>

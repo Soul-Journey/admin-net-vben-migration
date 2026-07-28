@@ -52,6 +52,7 @@ import {
   setRoleStatusApi,
   updateRoleApi,
 } from '#/api';
+import { ADMIN_PAGINATION_PROPS } from '#/utils/pagination';
 
 defineOptions({ name: 'AdminNetSystemRole' });
 
@@ -131,10 +132,20 @@ const columns: TableColumnsType<SysRoleRecord> = [
 
 const roleRules: Record<string, Rule[]> = {
   code: [
-    { message: '请输入角色编码', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入角色编码',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   name: [
-    { message: '请输入角色名称', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入角色名称',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
 };
 
@@ -146,7 +157,8 @@ const tenantOptions = computed(() =>
 );
 
 const isSuperAdmin = computed(
-  () => Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
+  () =>
+    Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
 );
 
 function can(code: string) {
@@ -214,7 +226,10 @@ function getOrgIcon(level: number) {
   return 'lucide:tag';
 }
 
-function filterMenuTree(items: SysMenuTree[] = [], keyword = ''): SysMenuTree[] {
+function filterMenuTree(
+  items: SysMenuTree[] = [],
+  keyword = '',
+): SysMenuTree[] {
   const normalizedKeyword = keyword.trim().toLowerCase();
   if (!normalizedKeyword) {
     return items;
@@ -627,7 +642,10 @@ onMounted(async () => {
               :checked="record.status === ENABLED"
               :disabled="!can('sysRole:setStatus')"
               size="small"
-              @change="(checked) => changeStatus(asRoleRecord(record), Boolean(checked))"
+              @change="
+                (checked) =>
+                  changeStatus(asRoleRecord(record), Boolean(checked))
+              "
             />
           </template>
           <template v-else-if="column.key === 'modifyRecord'">
@@ -710,13 +728,11 @@ onMounted(async () => {
 
       <div class="table-footer">
         <Pagination
+          v-bind="ADMIN_PAGINATION_PROPS"
           v-model:current="pagination.page"
           v-model:page-size="pagination.pageSize"
-          :page-size-options="['10', '20', '50', '100']"
           :show-total="(total) => `共 ${total} 条`"
           :total="pagination.total"
-          show-quick-jumper
-          show-size-changer
           size="small"
           @change="handlePageChange"
           @show-size-change="handlePageChange"
@@ -726,14 +742,18 @@ onMounted(async () => {
 
     <Modal
       v-model:open="drawerOpen"
-      :body-style="{ maxHeight: '72vh', overflowY: 'auto', padding: '16px 20px' }"
+      :body-style="{
+        maxHeight: '72vh',
+        overflowY: 'auto',
+        padding: '16px 20px',
+      }"
       :footer="null"
       :mask-closable="false"
       :title="drawerTitle"
       centered
       class="role-modal"
       destroy-on-close
-      width="760"
+      :width="760"
       @cancel="roleFormRef?.clearValidate()"
     >
       <Form
@@ -752,7 +772,9 @@ onMounted(async () => {
             <Form.Item label="角色编码" name="code">
               <Input
                 v-model:value="roleFormState.code"
-                :disabled="roleFormState.code === 'sys_admin' && !!roleFormState.id"
+                :disabled="
+                  roleFormState.code === 'sys_admin' && !!roleFormState.id
+                "
                 allow-clear
               />
             </Form.Item>
@@ -789,7 +811,9 @@ onMounted(async () => {
         <div class="permission-head">
           <div>
             <div class="permission-title">菜单权限</div>
-            <div class="permission-subtitle">搜索定位菜单，必要时展开后勾选按钮权限</div>
+            <div class="permission-subtitle">
+              搜索定位菜单，必要时展开后勾选按钮权限
+            </div>
           </div>
           <Tag class="permission-count" color="blue">
             已选 {{ checkedMenuCount }} 项
@@ -818,7 +842,11 @@ onMounted(async () => {
               </template>
               折叠
             </Button>
-            <Button size="small" :loading="menuLoading" @click="refreshMenuTree">
+            <Button
+              size="small"
+              :loading="menuLoading"
+              @click="refreshMenuTree"
+            >
               <template #icon>
                 <IconifyIcon icon="lucide:refresh-cw" />
               </template>
@@ -826,7 +854,10 @@ onMounted(async () => {
             </Button>
           </Space>
         </div>
-        <div class="tree-shell permission-tree" :class="{ 'is-loading': menuLoading }">
+        <div
+          class="tree-shell permission-tree"
+          :class="{ 'is-loading': menuLoading }"
+        >
           <Tree
             v-if="menuTreeData?.length"
             :checked-keys="checkedMenuKeys"
@@ -862,14 +893,18 @@ onMounted(async () => {
 
     <Modal
       v-model:open="dataScopeOpen"
-      :body-style="{ maxHeight: '68vh', overflowY: 'auto', padding: '16px 20px' }"
+      :body-style="{
+        maxHeight: '68vh',
+        overflowY: 'auto',
+        padding: '16px 20px',
+      }"
       :footer="null"
       :mask-closable="false"
       centered
       destroy-on-close
       class="role-scope-modal"
       title="授权数据范围"
-      width="520"
+      :width="520"
     >
       <div class="scope-summary">
         <div class="scope-summary-label">当前角色</div>
@@ -935,18 +970,18 @@ onMounted(async () => {
 <style scoped>
 .role-page {
   display: flex;
-  min-height: 100%;
   flex-direction: column;
   gap: 12px;
+  min-height: 100%;
   padding: 12px;
   background: hsl(var(--muted) / 35%);
 }
 
 .query-panel,
 .table-panel {
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border) / 72%);
   border-radius: 8px;
-  background: hsl(var(--background));
 }
 
 .query-panel {
@@ -976,30 +1011,30 @@ onMounted(async () => {
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  margin: 18px -20px -16px;
   padding: 12px 20px;
-  border-top: 1px solid hsl(var(--border) / 72%);
+  margin: 18px -20px -16px;
   background: hsl(var(--background));
+  border-top: 1px solid hsl(var(--border) / 72%);
 }
 
 .permission-head {
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
   margin: 4px 0 8px;
 }
 
 .permission-title {
-  color: hsl(var(--foreground));
   font-size: 14px;
   font-weight: 650;
+  color: hsl(var(--foreground));
 }
 
 .permission-subtitle {
   margin-top: 2px;
-  color: hsl(var(--muted-foreground));
   font-size: 12px;
+  color: hsl(var(--muted-foreground));
 }
 
 .permission-count {
@@ -1017,16 +1052,16 @@ onMounted(async () => {
 .tree-shell {
   min-height: 360px;
   padding: 8px;
-  border: 1px solid hsl(var(--border) / 75%);
-  border-radius: 8px;
   background:
     linear-gradient(180deg, hsl(var(--muted) / 30%), transparent 58px),
     hsl(var(--background));
+  border: 1px solid hsl(var(--border) / 75%);
+  border-radius: 8px;
 }
 
 .tree-shell.is-loading {
-  opacity: 0.62;
   pointer-events: none;
+  opacity: 0.62;
 }
 
 .permission-tree {
@@ -1042,42 +1077,42 @@ onMounted(async () => {
 
 .tree-node {
   display: flex;
-  min-width: 0;
-  align-items: center;
   gap: 8px;
-  color: hsl(var(--foreground));
+  align-items: center;
+  min-width: 0;
   font-size: 13px;
   font-weight: 500;
   line-height: 30px;
+  color: hsl(var(--foreground));
 }
 
 .tree-node-icon-wrap {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
   flex: none;
   align-items: center;
   justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border));
   border-radius: 6px;
-  background: hsl(var(--background));
 }
 
 .tree-node-icon-wrap.type-1 {
-  background: hsl(var(--primary) / 9%);
   color: hsl(var(--primary));
+  background: hsl(var(--primary) / 9%);
 }
 
 .tree-node-icon-wrap.type-3 {
-  background: hsl(var(--warning) / 12%);
   color: hsl(var(--warning));
+  background: hsl(var(--warning) / 12%);
 }
 
 .tree-node-icon {
+  flex: none;
   width: 14px;
   height: 14px;
-  flex: none;
-  color: currentColor;
+  color: currentcolor;
 }
 
 .tree-node-title {
@@ -1088,33 +1123,33 @@ onMounted(async () => {
 }
 
 .scope-summary {
-  margin-bottom: 14px;
   padding: 12px;
+  margin-bottom: 14px;
+  background: hsl(var(--muted) / 28%);
   border: 1px solid hsl(var(--border) / 72%);
   border-radius: 8px;
-  background: hsl(var(--muted) / 28%);
 }
 
 .scope-summary-label {
-  color: hsl(var(--muted-foreground));
   font-size: 12px;
+  color: hsl(var(--muted-foreground));
 }
 
 .scope-summary-value {
   margin-top: 4px;
-  color: hsl(var(--foreground));
   font-size: 15px;
   font-weight: 650;
+  color: hsl(var(--foreground));
 }
 
 .scope-hint {
   display: flex;
-  align-items: center;
   gap: 8px;
+  align-items: center;
   padding: 14px;
+  color: hsl(var(--muted-foreground));
   border: 1px dashed hsl(var(--border));
   border-radius: 8px;
-  color: hsl(var(--muted-foreground));
 }
 
 :deep(.ant-form-inline .ant-form-item) {
@@ -1135,8 +1170,8 @@ onMounted(async () => {
 }
 
 :deep(.ant-tree .ant-tree-node-content-wrapper) {
-  min-width: 0;
   flex: 1;
+  min-width: 0;
   height: 30px;
   padding-inline: 5px 8px;
   border-radius: 8px;

@@ -15,6 +15,7 @@ public class RestoreInput
     /// 文件名
     /// </summary>
     [Required(ErrorMessage = "文件名不能为空")]
+    [MaxLength(200, ErrorMessage = "文件名不能超过200个字符")]
     public string FileName { get; set; }
 }
 

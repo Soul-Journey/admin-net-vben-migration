@@ -12,6 +12,7 @@ namespace Admin.NET.Core;
 [SugarTable(null, "系统配置参数值表")]
 [SysTable]
 [SugarIndex("index_{table}_N", nameof(ConfigId), OrderByType.Asc)]
+[SugarIndex("index_{table}_TCU", nameof(TenantId), OrderByType.Asc, nameof(ConfigId), OrderByType.Asc, true)]
 public partial class SysConfigValue : EntityTenant
 {
     /// <summary>

@@ -51,17 +51,19 @@ useTabsDrag(props, emit);
 <template>
   <div class="flex h-full flex-1 overflow-hidden">
     <!-- 左侧滚动按钮 -->
-    <span
+    <button
       v-show="showScrollButton"
+      aria-label="向左滚动页签"
       :class="{
         'cursor-pointer text-muted-foreground hover:bg-muted': !scrollIsAtLeft,
         'pointer-events-none opacity-30': scrollIsAtLeft,
       }"
-      class="border-r px-2"
+      class="flex w-9 flex-none items-center justify-center border-r"
+      type="button"
       @click="scrollDirection('left')"
     >
       <ChevronsLeft class="size-4 h-full" />
-    </span>
+    </button>
 
     <div
       :class="{
@@ -82,26 +84,30 @@ useTabsDrag(props, emit);
         @scroll-at="handleScrollAt"
         @wheel="onWheel"
       >
-        <TabsChrome
-          v-if="styleType === 'chrome'"
-          v-bind="{ ...forward, ...$attrs, ...$props }"
-        />
+        <div class="h-full w-full">
+          <TabsChrome
+            v-if="styleType === 'chrome'"
+            v-bind="{ ...forward, ...$attrs, ...$props }"
+          />
 
-        <Tabs v-else v-bind="{ ...forward, ...$attrs, ...$props }" />
+          <Tabs v-else v-bind="{ ...forward, ...$attrs, ...$props }" />
+        </div>
       </VbenScrollbar>
     </div>
 
     <!-- 右侧滚动按钮 -->
-    <span
+    <button
       v-show="showScrollButton"
+      aria-label="向右滚动页签"
       :class="{
         'cursor-pointer text-muted-foreground hover:bg-muted': !scrollIsAtRight,
         'pointer-events-none opacity-30': scrollIsAtRight,
       }"
-      class="cursor-pointer border-l px-2 text-muted-foreground hover:bg-muted"
+      class="flex w-9 flex-none items-center justify-center border-l text-muted-foreground"
+      type="button"
       @click="scrollDirection('right')"
     >
       <ChevronsRight class="size-4 h-full" />
-    </span>
+    </button>
   </div>
 </template>

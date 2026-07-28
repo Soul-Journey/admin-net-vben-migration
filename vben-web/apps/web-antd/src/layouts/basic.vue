@@ -19,8 +19,12 @@ import { useAccessStore, useUserStore } from '@vben/stores';
 import { openWindow } from '@vben/utils';
 
 import { $t } from '#/locales';
-import { useAuthStore } from '#/store';
+import { loadSystemBranding, useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
+
+import OnlineUserPanel from './online-user-panel.vue';
+
+void loadSystemBranding();
 
 const notifications = ref<NotificationItem[]>([
   {
@@ -230,16 +234,19 @@ watch(
       />
     </template>
     <template #notification>
-      <Notification
-        :dot="showDot"
-        :notifications="notifications"
-        @clear="handleNoticeClear"
-        @read="(item) => item.id && markRead(item.id)"
-        @remove="(item) => item.id && remove(item.id)"
-        @make-all="handleMakeAll"
-        @on-click="handleClick"
-        @view-all="viewAll"
-      />
+      <div class="header-tools">
+        <OnlineUserPanel />
+        <Notification
+          :dot="showDot"
+          :notifications="notifications"
+          @clear="handleNoticeClear"
+          @read="(item) => item.id && markRead(item.id)"
+          @remove="(item) => item.id && remove(item.id)"
+          @make-all="handleMakeAll"
+          @on-click="handleClick"
+          @view-all="viewAll"
+        />
+      </div>
     </template>
     <template #extra>
       <AuthenticationLoginExpiredModal
@@ -254,3 +261,11 @@ watch(
     </template>
   </BasicLayout>
 </template>
+
+<style scoped>
+.header-tools {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+</style>

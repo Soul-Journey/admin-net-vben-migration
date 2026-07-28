@@ -12,28 +12,33 @@ public class CreateEntityInput
     /// 表名
     /// </summary>
     /// <example>student</example>
+    [Required, MaxLength(128)]
     public string TableName { get; set; }
 
     /// <summary>
     /// 实体名
     /// </summary>
     /// <example>Student</example>
+    [MaxLength(128)]
     public string EntityName { get; set; }
 
     /// <summary>
     /// 基类名
     /// </summary>
     /// <example>AutoIncrementEntity</example>
+    [MaxLength(128)]
     public string BaseClassName { get; set; }
 
     /// <summary>
     /// 导出位置
     /// </summary>
     /// <example>Web.Application</example>
+    [Required, MaxLength(128)]
     public string Position { get; set; }
 
     /// <summary>
     /// 库标识
     /// </summary>
+    [Required, MaxLength(64)]
     public string ConfigId { get; set; }
 }

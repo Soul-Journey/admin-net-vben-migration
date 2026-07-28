@@ -41,16 +41,26 @@ public class SysConfigService : IDynamicApiController, ITransient
     /// <param name="input"></param>
     /// <returns></returns>
     [DisplayName("获取参数配置分页列表")]
-    public async Task<SqlSugarPagedList<SysConfig>> Page(PageConfigInput input)
+    public async Task<SqlSugarPagedList<ConfigOutput>> Page(PageConfigInput input)
     {
         var queryable = await GetConfigQueryable();
-        return await queryable
+        var query = queryable
             .WhereIF(!_userManager.SuperAdmin,  u => u.SysFlag == YesNoEnum.N)
             .WhereIF(!string.IsNullOrWhiteSpace(input.Name?.Trim()), u => u.Name.Contains(input.Name))
             .WhereIF(!string.IsNullOrWhiteSpace(input.Code?.Trim()), u => u.Code.Contains(input.Code))
             .WhereIF(!string.IsNullOrWhiteSpace(input.GroupCode?.Trim()), u => u.GroupCode.Equals(input.GroupCode))
-            .OrderBuilder(input)
-            .ToPagedListAsync(input.Page, input.PageSize);
+            .OrderBuilder(input);
+        var page = await query.ToPagedListAsync(input.Page, input.PageSize);
+        return new SqlSugarPagedList<ConfigOutput>
+        {
+            Page = page.Page,
+            PageSize = page.PageSize,
+            Total = page.Total,
+            TotalPages = page.TotalPages,
+            HasNextPage = page.HasNextPage,
+            HasPrevPage = page.HasPrevPage,
+            Items = page.Items.Select(ToSafeOutput).ToList(),
+        };
     }
 
     /// <summary>
@@ -58,12 +68,15 @@ public class SysConfigService : IDynamicApiController, ITransient
     /// </summary>
     /// <returns></returns>
     [DisplayName("获取参数配置列表")]
-    public async Task<List<SysConfig>> List(PageConfigInput input)
+    public async Task<List<ConfigOutput>> List(PageConfigInput input)
     {
         var queryable = await GetConfigQueryable();
-        return await queryable
+        var query = queryable
+            .WhereIF(!_userManager.SuperAdmin, u => u.SysFlag == YesNoEnum.N)
             .WhereIF(!string.IsNullOrWhiteSpace(input.GroupCode?.Trim()), u => u.GroupCode.Equals(input.GroupCode))
-            .ToListAsync();
+            .OrderBy(u => u.OrderNo);
+        var items = await query.ToListAsync();
+        return items.Select(ToSafeOutput).ToList();
     }
 
     /// <summary>
@@ -73,14 +86,23 @@ public class SysConfigService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Add"), HttpPost]
     [DisplayName("增加参数配置")]
+    [UnitOfWork]
     public async Task AddConfig(AddConfigInput input)
     {
-        if (input.SysFlag == YesNoEnum.Y && !_userManager.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D3010);
+        if (!_userManager.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D3010);
 
         var isExist = await _sysConfigRep.IsAnyAsync(u => u.Name == input.Name || u.Code == input.Code);
         if (isExist) throw Oops.Oh(ErrorCodeEnum.D9000);
 
-        await _sysConfigRep.InsertAsync(input.Adapt<SysConfig>());
+        if (IsSensitiveCode(input.Code) && input.Value == SensitiveMask)
+            throw Oops.Oh("敏感配置必须填写实际值");
+
+        var entity = input.Adapt<SysConfig>();
+        if (entity.SysFlag == YesNoEnum.N)
+            entity.Value = null;
+        await _sysConfigRep.InsertAsync(entity);
+        if (entity.SysFlag == YesNoEnum.N)
+            await UpsertTenantValue(entity.Id, input.Value);
     }
 
     /// <summary>
@@ -90,9 +112,24 @@ public class SysConfigService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Update"), HttpPost]
     [DisplayName("更新参数配置")]
+    [UnitOfWork]
     public async Task UpdateConfig(UpdateConfigInput input)
     {
-        if (input.SysFlag == YesNoEnum.Y && !_userManager.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D3010);
+        var current = await _sysConfigRep.GetFirstAsync(u => u.Id == input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+        if (current.SysFlag == YesNoEnum.Y && !_userManager.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D3010);
+
+        if (IsSensitiveCode(current.Code) && input.Value == SensitiveMask)
+        {
+            var currentValue = await GetConfigQueryable();
+            input.Value = (await currentValue.FirstAsync(u => u.Id == input.Id))?.Value;
+        }
+
+        if (!_userManager.SuperAdmin)
+        {
+            await UpsertTenantValue(current.Id, input.Value);
+            Remove(current);
+            return;
+        }
 
         var isExist = await _sysConfigRep.IsAnyAsync(u => (u.Name == input.Name || u.Code == input.Code) && u.Id != input.Id);
         if (isExist) throw Oops.Oh(ErrorCodeEnum.D9000);
@@ -101,23 +138,7 @@ public class SysConfigService : IDynamicApiController, ITransient
         if (input.SysFlag != YesNoEnum.Y)
         {
             config.Value = null;
-            var configValue = await _sysConfigValueRep.AsQueryable().ClearFilter()
-                .WhereIF(_userManager.TenantId > 0, u => u.TenantId == _userManager.TenantId)
-                .WhereIF(_userManager.TenantId <= 0, u => u.TenantId == SqlSugarConst.DefaultTenantId)
-                .SingleAsync(u => u.ConfigId == config.Id);
-            if (configValue == null)
-            {
-                await _sysConfigValueRep.InsertAsync(new SysConfigValue()
-                {
-                    ConfigId = config.Id,
-                    Value = input.Value
-                });
-            }
-            else
-            {
-                configValue.Value = input.Value;
-                await _sysConfigValueRep.UpdateAsync(configValue);
-            }
+            await UpsertTenantValue(config.Id, input.Value);
         }
         else
         {
@@ -134,9 +155,12 @@ public class SysConfigService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Delete"), HttpPost]
     [DisplayName("删除参数配置")]
+    [UnitOfWork]
     public async Task DeleteConfig(DeleteConfigInput input)
     {
+        if (!_userManager.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D3010);
         var config = await _sysConfigRep.GetFirstAsync(u => u.Id == input.Id);
+        _ = config ?? throw Oops.Oh(ErrorCodeEnum.D1002);
 
         // 禁止删除系统参数
         if (config.SysFlag == YesNoEnum.Y) throw Oops.Oh(ErrorCodeEnum.D9001);
@@ -153,11 +177,15 @@ public class SysConfigService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "BatchDelete"), HttpPost]
     [DisplayName("批量删除参数配置")]
+    [UnitOfWork]
     public async Task BatchDeleteConfig(List<long> ids)
     {
+        if (!_userManager.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D3010);
+        ids = ids.Distinct().ToList();
         foreach (var id in ids)
         {
             var config = await _sysConfigRep.GetFirstAsync(u => u.Id == id);
+            if (config == null) continue;
 
             // 禁止删除系统参数
             if (config.SysFlag == YesNoEnum.Y) continue;
@@ -175,10 +203,13 @@ public class SysConfigService : IDynamicApiController, ITransient
     /// <param name="input"></param>
     /// <returns></returns>
     [DisplayName("获取参数配置详情")]
-    public async Task<SysConfig> GetDetail([FromQuery] ConfigInput input)
+    public async Task<ConfigOutput> GetDetail([FromQuery] ConfigInput input)
     {
         var query = await GetConfigQueryable();
-        return await query.FirstAsync(u => u.Id == input.Id);
+        query = query.WhereIF(!_userManager.SuperAdmin, u => u.SysFlag == YesNoEnum.N);
+        var config = await query.FirstAsync(u => u.Id == input.Id)
+            ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+        return ToSafeOutput(config);
     }
 
     /// <summary>
@@ -213,7 +244,7 @@ public class SysConfigService : IDynamicApiController, ITransient
         var tenantId = _userManager.TenantId;
         if (_userManager.TenantId <= 0) tenantId = SqlSugarConst.DefaultTenantId;
         return Task.FromResult(
-            _sysConfigRep.AsQueryable()
+            _sysConfigRep.CopyNew().AsQueryable()
                 .LeftJoin<SysConfigValue>((u, w) => u.Id == w.ConfigId).ClearFilter()
                 .Where((u, w) => w.TenantId == null || w.TenantId == tenantId)
                 .Select((u, w) => new SysConfig
@@ -222,6 +253,7 @@ public class SysConfigService : IDynamicApiController, ITransient
                     Name = u.Name,
                     Code = u.Code,
                     GroupCode = u.GroupCode,
+                    OrderNo = u.OrderNo,
                     SysFlag = u.SysFlag,
                     Remark = u.Remark,
                     Value = w.Value ?? u.Value,
@@ -358,6 +390,8 @@ public class SysConfigService : IDynamicApiController, ITransient
     [DisplayName("保存系统信息")]
     public async Task SaveSysInfo(InfoSaveInput input)
     {
+        EnsureSystemAdmin();
+        ValidateSystemInfo(input);
         var tenant = await SysTenantService.GetCurrentTenant() ?? throw Oops.Oh(ErrorCodeEnum.D1002);
         if (!string.IsNullOrEmpty(input.LogoBase64)) SysTenantService.SetLogoUrl(tenant, input.LogoBase64, input.LogoFileName);
         // await UpdateConfigValue(ConfigConst.SysCaptcha, (input.Captcha == YesNoEnum.Y).ToString());
@@ -368,11 +402,97 @@ public class SysConfigService : IDynamicApiController, ITransient
         await _sysConfigRep.Context.Updateable(tenant).ExecuteCommandAsync();
     }
 
+    private void EnsureSystemAdmin()
+    {
+        if (!_userManager.SuperAdmin && !_userManager.SysAdmin)
+            throw Oops.Oh("仅超级管理员或系统管理员可修改系统信息");
+    }
+
+    private static void ValidateSystemInfo(InfoSaveInput input)
+    {
+        if (!Uri.TryCreate(input.IcpUrl, UriKind.Absolute, out var icpUri)
+            || (icpUri.Scheme != Uri.UriSchemeHttp && icpUri.Scheme != Uri.UriSchemeHttps))
+            throw Oops.Oh("ICP 地址必须是有效的 http 或 https 地址");
+
+        if (string.IsNullOrWhiteSpace(input.LogoBase64)) return;
+        var match = Regex.Match(input.LogoBase64, @"^data:image/(?<type>png|jpeg);base64,(?<data>[A-Za-z0-9+/=]+)$", RegexOptions.IgnoreCase);
+        if (!match.Success) throw Oops.Oh("系统图标仅支持 PNG、JPG 或 JPEG 格式");
+
+        byte[] logoBytes;
+        try
+        {
+            logoBytes = Convert.FromBase64String(match.Groups["data"].Value);
+        }
+        catch (FormatException)
+        {
+            throw Oops.Oh("系统图标内容不是有效的 Base64 数据");
+        }
+
+        if (logoBytes.Length > 2 * 1024 * 1024) throw Oops.Oh("系统图标不能超过 2MB");
+        var extension = Path.GetExtension(input.LogoFileName)?.ToLowerInvariant();
+        if (extension is not ".png" and not ".jpg" and not ".jpeg")
+            throw Oops.Oh("系统图标文件扩展名仅支持 .png、.jpg 或 .jpeg");
+    }
+
     private void Remove(SysConfig config)
     {
         _sysCacheService.Remove($"{CacheConst.KeyConfig}Value:{config.Code}");
         _sysCacheService.Remove($"{CacheConst.KeyConfig}Remark:{config.Code}");
         _sysCacheService.Remove($"{CacheConst.KeyConfig}{config.GroupCode}:GroupWithCache");
         _sysCacheService.Remove($"{CacheConst.KeyConfig}{config.Code}");
+    }
+
+    private const string SensitiveMask = "******";
+
+    private static bool IsSensitiveCode(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return false;
+        return code.Equals(ConfigConst.SysPassword, StringComparison.OrdinalIgnoreCase)
+            || code.Contains("secret", StringComparison.OrdinalIgnoreCase)
+            || code.EndsWith("_password", StringComparison.OrdinalIgnoreCase)
+            || code.EndsWith("_private_key", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task UpsertTenantValue(long configId, string? value)
+    {
+        var tenantId = _userManager.TenantId > 0 ? _userManager.TenantId : SqlSugarConst.DefaultTenantId;
+        var configValue = await _sysConfigValueRep.AsQueryable().ClearFilter()
+            .SingleAsync(u => u.ConfigId == configId && u.TenantId == tenantId);
+        if (configValue == null)
+        {
+            await _sysConfigValueRep.AsInsertable(new SysConfigValue
+            {
+                ConfigId = configId,
+                TenantId = tenantId,
+                Value = value,
+            }).ExecuteCommandAsync();
+            return;
+        }
+
+        configValue.Value = value;
+        await _sysConfigValueRep.AsUpdateable(configValue)
+            .UpdateColumns(u => new { u.Value })
+            .ExecuteCommandAsync();
+    }
+
+    private static ConfigOutput ToSafeOutput(SysConfig config)
+    {
+        var sensitive = IsSensitiveCode(config.Code);
+        return new ConfigOutput
+        {
+            Id = config.Id,
+            Name = config.Name,
+            Code = config.Code,
+            Value = sensitive ? SensitiveMask : config.Value,
+            IsSensitive = sensitive,
+            SysFlag = config.SysFlag,
+            GroupCode = config.GroupCode,
+            OrderNo = config.OrderNo,
+            Remark = config.Remark,
+            CreateTime = config.CreateTime,
+            UpdateTime = config.UpdateTime,
+            CreateUserName = config.CreateUserName,
+            UpdateUserName = config.UpdateUserName,
+        };
     }
 }

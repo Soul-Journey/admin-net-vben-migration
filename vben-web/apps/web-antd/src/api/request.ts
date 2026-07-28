@@ -12,13 +12,13 @@ import { useAccessStore } from '@vben/stores';
 import { message } from 'ant-design-vue';
 
 import { useAuthStore } from '#/store';
+import { unwrapAdminNetResponse } from '#/utils/adminnet/response';
 import {
   getStoredAccessToken,
   getStoredRefreshToken,
   isJwtExpired,
   syncAdminNetTokensFromHeaders,
 } from '#/utils/adminnet/token';
-import { unwrapAdminNetResponse } from '#/utils/adminnet/response';
 
 const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
 
@@ -96,7 +96,10 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     errorMessageResponseInterceptor((msg: string, error) => {
       const responseData = error?.response?.data ?? error ?? {};
       const errorMessage =
-        responseData?.error ?? responseData?.message ?? responseData?.title ?? '';
+        responseData?.error ??
+        responseData?.message ??
+        responseData?.title ??
+        '';
       message.error(errorMessage || msg);
     }),
   );

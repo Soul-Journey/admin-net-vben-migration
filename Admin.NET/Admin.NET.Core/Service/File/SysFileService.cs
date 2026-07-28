@@ -45,7 +45,8 @@ public class SysFileService : IDynamicApiController, ITransient
     public async Task<SqlSugarPagedList<SysFile>> Page(PageFileInput input)
     {
         // 获取所有公开附件
-        var publicList = _sysFileRep.AsQueryable().ClearFilter().Where(u => u.IsPublic == true);
+        var publicList = _sysFileRep.AsQueryable().ClearFilter()
+            .Where(u => u.IsPublic == true && u.IsDelete == false);
         // 获取私有附件
         var privateList = _sysFileRep.AsQueryable().Where(u => u.IsPublic == false);
         // 合并公开和私有附件并分页
@@ -109,7 +110,9 @@ public class SysFileService : IDynamicApiController, ITransient
     [DisplayName("根据文件Id或Url下载")]
     public async Task<IActionResult> DownloadFile(SysFile input)
     {
-        var file = input.Id > 0 ? await GetFile(input.Id) : await _sysFileRep.CopyNew().GetFirstAsync(u => u.Url == input.Url);
+        var file = input.Id > 0
+            ? await GetFile(input.Id)
+            : await GetReadableFileByUrl(input.Url);
         var fileName = HttpUtility.UrlEncode(file.FileName, Encoding.GetEncoding("UTF-8"));
         return await GetFileStreamResult(file, fileName);
     }
@@ -206,6 +209,7 @@ public class SysFileService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Delete"), HttpPost]
     [DisplayName("删除文件")]
+    [UnitOfWork]
     public async Task DeleteFile(DeleteFileInput input)
     {
         var file = await _sysFileRep.GetByIdAsync(input.Id);
@@ -239,12 +243,29 @@ public class SysFileService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Update"), HttpPost]
     [DisplayName("更新文件")]
-    public async Task UpdateFile(SysFile input)
+    public async Task UpdateFile(UpdateFileInput input)
     {
-        var isExist = await _sysFileRep.IsAnyAsync(u => u.Id == input.Id);
-        if (!isExist) throw Oops.Oh(ErrorCodeEnum.D8000);
-
-        await _sysFileRep.UpdateAsync(input);
+        var file = await _sysFileRep.GetByIdAsync(input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D8000);
+        file.FileName = input.FileName.Trim();
+        file.FileType = input.FileType?.Trim();
+        file.IsPublic = input.IsPublic;
+        file.RelationName = input.RelationName?.Trim();
+        file.RelationId = input.RelationId;
+        file.BelongId = input.BelongId;
+        await _sysFileRep.AsUpdateable(file)
+            .UpdateColumns(u => new
+            {
+                u.FileName,
+                u.FileType,
+                u.IsPublic,
+                u.RelationName,
+                u.RelationId,
+                u.BelongId,
+                u.UpdateTime,
+                u.UpdateUserId,
+                u.UpdateUserName,
+            })
+            .ExecuteCommandAsync();
     }
 
     /// <summary>
@@ -256,6 +277,22 @@ public class SysFileService : IDynamicApiController, ITransient
     public async Task<SysFile> GetFile([FromQuery] long id)
     {
         var file = await _sysFileRep.CopyNew().GetByIdAsync(id);
+        if (file != null) return file;
+
+        file = await _sysFileRep.CopyNew().AsQueryable().ClearFilter()
+            .FirstAsync(u => u.Id == id && u.IsPublic == true && u.IsDelete == false);
+        return file ?? throw Oops.Oh(ErrorCodeEnum.D8000);
+    }
+
+    [NonAction]
+    private async Task<SysFile> GetReadableFileByUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) throw Oops.Oh(ErrorCodeEnum.D8000);
+        var file = await _sysFileRep.CopyNew().GetFirstAsync(u => u.Url == url);
+        if (file != null) return file;
+
+        file = await _sysFileRep.CopyNew().AsQueryable().ClearFilter()
+            .FirstAsync(u => u.Url == url && u.IsPublic == true && u.IsDelete == false);
         return file ?? throw Oops.Oh(ErrorCodeEnum.D8000);
     }
 

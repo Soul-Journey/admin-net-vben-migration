@@ -37,6 +37,7 @@ public class SysOnlineUserService : IDynamicApiController, ITransient
     [DisplayName("获取在线用户分页列表")]
     public async Task<SqlSugarPagedList<SysOnlineUser>> Page(PageOnlineUserInput input)
     {
+        EnsureSystemAdmin();
         return await _sysOnlineUerRep.AsQueryable()
             .WhereIF(_userManager.SuperAdmin && input.TenantId > 0, u => u.TenantId == input.TenantId)
             .WhereIF(!string.IsNullOrWhiteSpace(input.UserName), u => u.UserName.Contains(input.UserName))
@@ -47,14 +48,60 @@ public class SysOnlineUserService : IDynamicApiController, ITransient
     /// <summary>
     /// 强制下线 🔖
     /// </summary>
-    /// <param name="user"></param>
+    /// <param name="input"></param>
     /// <returns></returns>
-    [NonValidation]
     [DisplayName("强制下线")]
-    public async Task ForceOffline(SysOnlineUser user)
+    public async Task ForceOffline(ForceOfflineOnlineUserInput input)
     {
-        await _onlineUserHubContext.Clients.Client(user.ConnectionId ?? "").ForceOffline("强制下线");
-        await _sysOnlineUerRep.DeleteAsync(user);
+        await ForceOfflineByConnection(input.ConnectionId, input.CurrentConnectionId);
+    }
+
+    /// <summary>
+    /// 按连接强制下线，供受 JWT 保护的 API 与在线用户 Hub 复用
+    /// </summary>
+    [NonAction]
+    public async Task ForceOfflineByConnection(string connectionId, string? currentConnectionId = null)
+    {
+        EnsureSystemAdmin();
+        if (string.IsNullOrWhiteSpace(connectionId)) throw Oops.Oh("连接标识不能为空");
+
+        var onlineUser = await _sysOnlineUerRep.AsQueryable().ClearFilter()
+            .FirstAsync(u => u.ConnectionId == connectionId)
+            ?? throw Oops.Oh("该连接已离线，请刷新列表");
+
+        var isOwnAccount = onlineUser.UserId == _userManager.UserId;
+        if (isOwnAccount)
+        {
+            if (string.IsNullOrWhiteSpace(currentConnectionId))
+                throw Oops.Oh("无法识别当前窗口，请刷新页面后重试");
+            if (onlineUser.ConnectionId == currentConnectionId)
+                throw Oops.Oh("不能强制下线当前窗口");
+
+            var currentConnectionIsValid = await _sysOnlineUerRep.AsQueryable().ClearFilter()
+                .AnyAsync(u => u.ConnectionId == currentConnectionId
+                    && u.UserId == _userManager.UserId
+                    && u.TenantId == _userManager.TenantId);
+            if (!currentConnectionIsValid)
+                throw Oops.Oh("当前窗口连接已变化，请刷新页面后重试");
+        }
+
+        if (!_userManager.SuperAdmin)
+        {
+            if (onlineUser.TenantId != _userManager.TenantId)
+                throw Oops.Oh("不能管理其他租户的在线账号");
+
+            if (!isOwnAccount)
+            {
+                var targetAccountType = await _sysOnlineUerRep.Context.Queryable<SysUser>().ClearFilter()
+                    .Where(u => u.Id == onlineUser.UserId)
+                    .Select(u => u.AccountType)
+                    .FirstAsync();
+                if (targetAccountType is AccountTypeEnum.SuperAdmin or AccountTypeEnum.SysAdmin)
+                    throw Oops.Oh("系统管理员不能强制下线管理员账号");
+            }
+        }
+
+        await NotifyAndDelete(onlineUser);
     }
 
     /// <summary>
@@ -87,7 +134,7 @@ public class SysOnlineUserService : IDynamicApiController, ITransient
             var users = await _sysOnlineUerRep.GetListAsync(u => u.UserId == userId);
             foreach (var user in users)
             {
-                await ForceOffline(user);
+                await NotifyAndDelete(user);
             }
         }
     }
@@ -103,7 +150,20 @@ public class SysOnlineUserService : IDynamicApiController, ITransient
         var users = await _sysOnlineUerRep.GetListAsync(u => u.UserId == userId);
         foreach (var user in users)
         {
-            await ForceOffline(user);
+            await NotifyAndDelete(user);
         }
+    }
+
+    private void EnsureSystemAdmin()
+    {
+        if (!_userManager.SuperAdmin && !_userManager.SysAdmin)
+            throw Oops.Oh("仅超级管理员或系统管理员可管理在线用户");
+    }
+
+    private async Task NotifyAndDelete(SysOnlineUser user)
+    {
+        if (!string.IsNullOrWhiteSpace(user.ConnectionId))
+            await _onlineUserHubContext.Clients.Client(user.ConnectionId).ForceOffline("强制下线");
+        await _sysOnlineUerRep.DeleteByIdAsync(user.Id);
     }
 }

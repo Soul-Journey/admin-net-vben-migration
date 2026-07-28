@@ -33,7 +33,10 @@ const component = computed(() => String(route.name || route.path));
           </div>
           <Space>
             <Button href="/#/dashboard/home">Dashboard</Button>
-            <Button href="https://gitee.com/zuohuaijun/Admin.NET" target="_blank">
+            <Button
+              href="https://gitee.com/zuohuaijun/Admin.NET"
+              target="_blank"
+            >
               Admin.NET
             </Button>
           </Space>

@@ -28,19 +28,87 @@ public class RegionInput : BaseIdInput
 {
 }
 
-public class AddRegionInput : SysRegion
+public class AddRegionInput
 {
+    /// <summary>
+    /// 父节点Id，0 表示根节点
+    /// </summary>
+    public long Pid { get; set; }
+
     /// <summary>
     /// 名称
     /// </summary>
     [Required(ErrorMessage = "名称不能为空")]
-    public override string Name { get; set; }
+    [MaxLength(128)]
+    public string Name { get; set; }
+
+    /// <summary>
+    /// 行政代码
+    /// </summary>
+    [Required(ErrorMessage = "行政代码不能为空")]
+    [MaxLength(32)]
+    public string Code { get; set; }
+
+    /// <summary>
+    /// 区号
+    /// </summary>
+    [MaxLength(6)]
+    public string? CityCode { get; set; }
+
+    /// <summary>
+    /// 排序
+    /// </summary>
+    public int OrderNo { get; set; } = 100;
+
+    /// <summary>
+    /// 备注
+    /// </summary>
+    [MaxLength(128)]
+    public string? Remark { get; set; }
 }
 
 public class UpdateRegionInput : AddRegionInput
 {
+    /// <summary>
+    /// 区域Id
+    /// </summary>
+    [Required]
+    public long Id { get; set; }
 }
 
 public class DeleteRegionInput : BaseIdInput
 {
+}
+
+public class RegionSyncOutput
+{
+    /// <summary>
+    /// 数据版本
+    /// </summary>
+    public string Version { get; set; }
+
+    /// <summary>
+    /// 数据来源
+    /// </summary>
+    public string Source { get; set; }
+
+    /// <summary>
+    /// 省级数量
+    /// </summary>
+    public int ProvinceCount { get; set; }
+
+    /// <summary>
+    /// 市级数量
+    /// </summary>
+    public int CityCount { get; set; }
+
+    /// <summary>
+    /// 区县级数量
+    /// </summary>
+    public int CountyCount { get; set; }
+
+    /// <summary>
+    /// 总数量
+    /// </summary>
+    public int Total { get; set; }
 }

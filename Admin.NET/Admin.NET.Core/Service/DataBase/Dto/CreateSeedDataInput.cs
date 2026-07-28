@@ -11,36 +11,42 @@ public class CreateSeedDataInput
     /// <summary>
     /// 库标识
     /// </summary>
+    [Required, MaxLength(64)]
     public string ConfigId { get; set; }
 
     /// <summary>
     /// 表名
     /// </summary>
     /// <example>student</example>
+    [Required, MaxLength(128)]
     public string TableName { get; set; }
 
     /// <summary>
     /// 实体名称
     /// </summary>
     /// <example>Student</example>
+    [MaxLength(128)]
     public string EntityName { get; set; }
 
     /// <summary>
     /// 种子名称
     /// </summary>
     /// <example>Student</example>
+    [MaxLength(128)]
     public string SeedDataName { get; set; }
 
     /// <summary>
     /// 导出位置
     /// </summary>
     /// <example>Web.Application</example>
+    [Required, MaxLength(128)]
     public string Position { get; set; }
 
     /// <summary>
     /// 后缀
     /// </summary>
     /// <example>Web.Application</example>
+    [MaxLength(64)]
     public string Suffix { get; set; }
 
     /// <summary>

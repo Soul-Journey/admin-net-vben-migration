@@ -79,7 +79,9 @@ function normalizePos(item: unknown): SysPosRecord {
   return {
     code: toStringValue(record.code ?? record.Code),
     createTime: toStringValue(record.createTime ?? record.CreateTime),
-    createUserName: toStringValue(record.createUserName ?? record.CreateUserName),
+    createUserName: toStringValue(
+      record.createUserName ?? record.CreateUserName,
+    ),
     id: toNumber(record.id ?? record.Id) ?? 0,
     name: toStringValue(record.name ?? record.Name) ?? '',
     orderNo: toNumber(record.orderNo ?? record.OrderNo),
@@ -87,7 +89,9 @@ function normalizePos(item: unknown): SysPosRecord {
     status: toNumber(record.status ?? record.Status),
     tenantId: toNumber(record.tenantId ?? record.TenantId),
     updateTime: toStringValue(record.updateTime ?? record.UpdateTime),
-    updateUserName: toStringValue(record.updateUserName ?? record.UpdateUserName),
+    updateUserName: toStringValue(
+      record.updateUserName ?? record.UpdateUserName,
+    ),
     userList: Array.isArray(userList)
       ? userList.map((user) => normalizePosUser(user))
       : [],

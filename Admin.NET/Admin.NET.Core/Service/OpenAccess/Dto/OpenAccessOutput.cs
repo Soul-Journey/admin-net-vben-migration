@@ -18,3 +18,20 @@ public class OpenAccessOutput : SysOpenAccess
     /// </summary>
     public string BindTenantName { get; set; }
 }
+
+/// <summary>
+/// 开放接口身份安全输出（不返回密钥）
+/// </summary>
+public class OpenAccessSafeOutput
+{
+    public long Id { get; set; }
+    public string AccessKey { get; set; }
+    public long BindTenantId { get; set; }
+    public long BindUserId { get; set; }
+    public string BindUserAccount { get; set; }
+    public string BindTenantName { get; set; }
+    public DateTime CreateTime { get; set; }
+    public DateTime? UpdateTime { get; set; }
+    public string? CreateUserName { get; set; }
+    public string? UpdateUserName { get; set; }
+}

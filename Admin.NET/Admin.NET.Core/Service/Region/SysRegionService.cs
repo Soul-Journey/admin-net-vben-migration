@@ -4,8 +4,7 @@
 //
 // 不得利用本项目从事危害国家安全、扰乱社会秩序、侵犯他人合法权益等法律法规禁止的活动！任何基于本项目二次开发而产生的一切法律纠纷和责任，我们不承担任何责任！
 
-using NewLife.Http;
-using NewLife.Serialization;
+using System.Net;
 
 namespace Admin.NET.Core.Service;
 
@@ -15,13 +14,16 @@ namespace Admin.NET.Core.Service;
 [ApiDescriptionSettings(Order = 310)]
 public class SysRegionService : IDynamicApiController, ITransient
 {
+    private const string OfficialRegionSource = "https://www.mca.gov.cn/mzsj/xzqh/2025/202401xzqh.html";
     private readonly SqlSugarRepository<SysRegion> _sysRegionRep;
     private readonly SysConfigService _sysConfigService;
+    private readonly UserManager _userManager;
 
-    public SysRegionService(SqlSugarRepository<SysRegion> sysRegionRep, SysConfigService sysConfigService)
+    public SysRegionService(SqlSugarRepository<SysRegion> sysRegionRep, SysConfigService sysConfigService, UserManager userManager)
     {
         _sysRegionRep = sysRegionRep;
         _sysConfigService = sysConfigService;
+        _userManager = userManager;
     }
 
     /// <summary>
@@ -36,6 +38,7 @@ public class SysRegionService : IDynamicApiController, ITransient
             .WhereIF(input.Pid > 0, u => u.Pid == input.Pid || u.Id == input.Pid)
             .WhereIF(!string.IsNullOrWhiteSpace(input.Name), u => u.Name.Contains(input.Name))
             .WhereIF(!string.IsNullOrWhiteSpace(input.Code), u => u.Code.Contains(input.Code))
+            .OrderBy(u => u.Level).OrderBy(u => u.OrderNo).OrderBy(u => u.Code)
             .ToPagedListAsync(input.Page, input.PageSize);
     }
 
@@ -47,7 +50,11 @@ public class SysRegionService : IDynamicApiController, ITransient
     [DisplayName("获取行政区域列表")]
     public async Task<List<SysRegion>> GetList([FromQuery] RegionInput input)
     {
-        return await _sysRegionRep.GetListAsync(u => u.Pid == input.Id);
+        return await _sysRegionRep.AsQueryable()
+            .Where(u => u.Pid == input.Id)
+            .OrderBy(u => u.OrderNo)
+            .OrderBy(u => u.Code)
+            .ToListAsync();
     }
 
     /// <summary>
@@ -59,21 +66,18 @@ public class SysRegionService : IDynamicApiController, ITransient
     [DisplayName("增加行政区域")]
     public async Task<long> AddRegion(AddRegionInput input)
     {
+        input.Name = input.Name.Trim();
         input.Code = input.Code?.Trim() ?? "";
         if (input.Code.Length != 12 && input.Code.Length != 9 && input.Code.Length != 6) throw Oops.Oh(ErrorCodeEnum.R2003);
 
-        if (input.Pid != 0)
-        {
-            var pRegion = await _sysRegionRep.GetFirstAsync(u => u.Id == input.Pid);
-            pRegion ??= await _sysRegionRep.GetFirstAsync(u => u.Code == input.Pid.ToString());
-            if (pRegion == null) throw Oops.Oh(ErrorCodeEnum.D2000);
-            input.Pid = pRegion.Id;
-        }
+        var parent = await ResolveParent(input.Pid);
+        input.Pid = parent?.Id ?? 0;
 
-        var isExist = await _sysRegionRep.IsAnyAsync(u => u.Name == input.Name && u.Code == input.Code);
+        var isExist = await _sysRegionRep.IsAnyAsync(u => u.Code == input.Code);
         if (isExist) throw Oops.Oh(ErrorCodeEnum.R2002);
 
         var sysRegion = input.Adapt<SysRegion>();
+        sysRegion.Level = (parent?.Level ?? 0) + 1;
         var newRegion = await _sysRegionRep.AsInsertable(sysRegion).ExecuteReturnEntityAsync();
         return newRegion.Id;
     }
@@ -87,19 +91,17 @@ public class SysRegionService : IDynamicApiController, ITransient
     [DisplayName("更新行政区域")]
     public async Task UpdateRegion(UpdateRegionInput input)
     {
+        input.Name = input.Name.Trim();
         input.Code = input.Code?.Trim() ?? "";
         if (input.Code.Length != 12 && input.Code.Length != 9 && input.Code.Length != 6) throw Oops.Oh(ErrorCodeEnum.R2003);
 
         var sysRegion = await _sysRegionRep.GetFirstAsync(u => u.Id == input.Id);
         if (sysRegion == null) throw Oops.Oh(ErrorCodeEnum.D1002);
 
-        if (sysRegion.Pid != input.Pid && input.Pid != 0)
+        var parent = await ResolveParent(input.Pid);
+        input.Pid = parent?.Id ?? 0;
+        if (sysRegion.Pid != input.Pid)
         {
-            var pRegion = await _sysRegionRep.GetFirstAsync(u => u.Id == input.Pid);
-            pRegion ??= await _sysRegionRep.GetFirstAsync(u => u.Code == input.Pid.ToString());
-            if (pRegion == null) throw Oops.Oh(ErrorCodeEnum.D2000);
-
-            input.Pid = pRegion.Id;
             var regionTreeList = await _sysRegionRep.AsQueryable().ToChildListAsync(u => u.Pid, input.Id, true);
             var childIdList = regionTreeList.Select(u => u.Id).ToList();
             if (childIdList.Contains(input.Pid)) throw Oops.Oh(ErrorCodeEnum.R2004);
@@ -107,7 +109,7 @@ public class SysRegionService : IDynamicApiController, ITransient
 
         if (input.Id == input.Pid) throw Oops.Oh(ErrorCodeEnum.R2001);
 
-        var isExist = await _sysRegionRep.IsAnyAsync(u => (u.Name == input.Name && u.Code == input.Code) && u.Id != sysRegion.Id);
+        var isExist = await _sysRegionRep.IsAnyAsync(u => u.Code == input.Code && u.Id != sysRegion.Id);
         if (isExist) throw Oops.Oh(ErrorCodeEnum.R2002);
 
         //// 父Id不能为自己的子节点
@@ -116,7 +118,29 @@ public class SysRegionService : IDynamicApiController, ITransient
         //if (childIdList.Contains(input.Pid))
         //    throw Oops.Oh(ErrorCodeEnum.R2001);
 
-        await _sysRegionRep.AsUpdateable(input.Adapt<SysRegion>()).IgnoreColumns(true).ExecuteCommandAsync();
+        var newLevel = (parent?.Level ?? 0) + 1;
+        var levelOffset = newLevel - sysRegion.Level;
+        var updatedRegion = input.Adapt<SysRegion>();
+        updatedRegion.Level = newLevel;
+
+        await _sysRegionRep.Context.Ado.BeginTranAsync();
+        try
+        {
+            await _sysRegionRep.AsUpdateable(updatedRegion).IgnoreColumns(true).ExecuteCommandAsync();
+            if (levelOffset != 0)
+            {
+                var descendants = await _sysRegionRep.AsQueryable().ToChildListAsync(u => u.Pid, input.Id, false);
+                foreach (var descendant in descendants) descendant.Level += levelOffset;
+                if (descendants.Count > 0)
+                    await _sysRegionRep.Context.Updateable(descendants).UpdateColumns(u => u.Level).ExecuteCommandAsync();
+            }
+            await _sysRegionRep.Context.Ado.CommitTranAsync();
+        }
+        catch
+        {
+            await _sysRegionRep.Context.Ado.RollbackTranAsync();
+            throw;
+        }
     }
 
     /// <summary>
@@ -126,11 +150,13 @@ public class SysRegionService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Delete"), HttpPost]
     [DisplayName("删除行政区域")]
-    public async Task DeleteRegion(DeleteRegionInput input)
+    public async Task<int> DeleteRegion(DeleteRegionInput input)
     {
         var regionTreeList = await _sysRegionRep.AsQueryable().ToChildListAsync(u => u.Pid, input.Id, true);
+        if (regionTreeList.Count == 0) throw Oops.Oh(ErrorCodeEnum.D1002);
         var regionIdList = regionTreeList.Select(u => u.Id).ToList();
         await _sysRegionRep.DeleteAsync(u => regionIdList.Contains(u.Id));
+        return regionIdList.Count;
     }
 
     /// <summary>
@@ -138,14 +164,47 @@ public class SysRegionService : IDynamicApiController, ITransient
     /// </summary>
     /// <returns></returns>
     [DisplayName("同步行政区域")]
-    public async Task Sync()
+    public async Task<RegionSyncOutput> Sync()
     {
+        if (!_userManager.SuperAdmin) throw Oops.Oh("仅超级管理员可同步全国行政区域");
+
         var syncLevel = await _sysConfigService.GetConfigValue<int>(ConfigConst.SysRegionSyncLevel);
         if (syncLevel is < 1 or > 5) syncLevel = 3;//默认区县级
+        syncLevel = Math.Min(syncLevel, 3);//当前官方公开数据为县级以上
 
-        await _sysRegionRep.DeleteAsync(u => u.Id > 0);
+        var regions = await GetRegionsFromOfficialList(syncLevel);
+        if (regions.Count == 0 || regions.Any(u => string.IsNullOrWhiteSpace(u.Code)))
+            throw Oops.Oh("外部行政区域数据不完整，已取消同步，原数据未变更");
+        if (regions.GroupBy(u => u.Code).Any(g => g.Count() > 1))
+            throw Oops.Oh("外部行政区域存在重复编码，已取消同步，原数据未变更");
 
-        await SyncByMap(syncLevel);
+        var regionIds = regions.Select(u => u.Id).ToHashSet();
+        if (regions.Any(u => u.Pid != 0 && !regionIds.Contains(u.Pid)))
+            throw Oops.Oh("外部行政区域父子关系不完整，已取消同步，原数据未变更");
+
+        await _sysRegionRep.Context.Ado.BeginTranAsync();
+        try
+        {
+            await _sysRegionRep.Context.Deleteable<SysRegion>().ExecuteCommandAsync();
+            foreach (var batch in regions.Chunk(500))
+                await _sysRegionRep.Context.Insertable(batch.ToList()).ExecuteCommandAsync();
+            await _sysRegionRep.Context.Ado.CommitTranAsync();
+        }
+        catch
+        {
+            await _sysRegionRep.Context.Ado.RollbackTranAsync();
+            throw;
+        }
+
+        return new RegionSyncOutput
+        {
+            Version = "2024",
+            Source = "中华人民共和国民政部：县以上行政区划代码",
+            ProvinceCount = regions.Count(u => u.Level == 1),
+            CityCount = regions.Count(u => u.Level == 2),
+            CountyCount = regions.Count(u => u.Level == 3),
+            Total = regions.Count,
+        };
 
         // var context = BrowsingContext.New(AngleSharp.Configuration.Default.WithDefaultLoader());
         // var dom = await context.OpenAsync(_url);
@@ -264,81 +323,109 @@ public class SysRegionService : IDynamicApiController, ITransient
     }
 
     /// <summary>
-    /// 从统计局地图页面同步
+    /// 从民政部公开的县以上行政区划代码页面同步
     /// </summary>
     /// <param name="syncLevel"></param>
-    private async Task SyncByMap(int syncLevel)
+    private async Task<List<SysRegion>> GetRegionsFromOfficialList(int syncLevel)
     {
-        var client = new HttpClient();
-        client.DefaultRequestHeaders.Add("Referer", "http://xzqh.mca.gov.cn/map");
-        var html = await client.GetStringAsync("http://xzqh.mca.gov.cn/map");
+        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Admin.NET Region Sync/1.0");
+        var html = await client.GetStringAsync(OfficialRegionSource);
+        var rowMatches = Regex.Matches(html, @"<tr\b[^>]*>(?<row>[\s\S]*?)</tr>", RegexOptions.IgnoreCase);
+        var regions = new List<SysRegion>();
+        SysRegion? currentProvince = null;
+        SysRegion? currentCity = null;
+        var orderByLevel = new Dictionary<int, int>();
 
-        var municipalityList = new List<string> { "北京", "天津", "上海", "重庆" };
-        var provList = Regex.Match(html, @"(?<=var json = )(\[\{.*?\}\])(?=;)").Value.ToJsonEntity<List<Dictionary<string, string>>>();
-        foreach (var dict1 in provList)
+        foreach (Match rowMatch in rowMatches)
         {
-            var list = new List<SysRegion>();
-            var provName = dict1.GetValueOrDefault("shengji");
-            var province = new SysRegion
+            var row = rowMatch.Groups["row"].Value;
+            var dataMatch = Regex.Match(
+                row,
+                @"<td\b[^>]*>\s*(?<code>\d{6})\s*</td>\s*<td\b[^>]*>(?<name>[\s\S]*?)</td>",
+                RegexOptions.IgnoreCase);
+            if (!dataMatch.Success) continue;
+
+            var code = dataMatch.Groups["code"].Value;
+            var decodedName = WebUtility.HtmlDecode(
+                Regex.Replace(dataMatch.Groups["name"].Value, @"<[^>]+>", ""));
+            var leadingSpaces = decodedName.TakeWhile(char.IsWhiteSpace).Count();
+            var name = decodedName.Trim();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var level = leadingSpaces switch
             {
-                Id = YitIdHelper.NextId(),
-                Name = Regex.Replace(provName, "[(（].*?[）)]", ""),
-                Code = dict1.GetValueOrDefault("quHuaDaiMa"),
-                CityCode = dict1.GetValueOrDefault("quhao"),
-                Level = 1,
-                Pid = 0,
+                >= 2 => 3,
+                1 => 2,
+                _ => 1,
             };
-            if (municipalityList.Any(m => province.Name.StartsWith(m))) province.Name += "(省)";
-            list.Add(province);
 
-            if (syncLevel <= 1) continue;
-
-            var prefList = await GetSelectList(provName);
-            foreach (var dict2 in prefList)
+            if (level == 1)
             {
-                var prefName = dict2.GetValueOrDefault("diji");
-                var city = new SysRegion
+                currentProvince = new SysRegion
                 {
                     Id = YitIdHelper.NextId(),
-                    Code = dict2.GetValueOrDefault("quHuaDaiMa"),
-                    CityCode = dict2.GetValueOrDefault("quhao"),
-                    Pid = province.Id,
-                    Name = prefName,
-                    Level = 2
+                    Pid = 0,
+                    Name = name,
+                    Code = code,
+                    Level = 1,
+                    OrderNo = NextOrder(1),
                 };
-                if (municipalityList.Any(m => city.Name.StartsWith(m))) city.Name += "(地)";
-                list.Add(city);
-
-                if (syncLevel <= 2) continue;
-
-                var countyList = await GetSelectList(provName, prefName);
-                foreach (var dict3 in countyList)
-                {
-                    var countyName = dict3.GetValueOrDefault("xianji");
-                    var county = new SysRegion
-                    {
-                        Id = YitIdHelper.NextId(),
-                        Code = dict3.GetValueOrDefault("quHuaDaiMa"),
-                        CityCode = dict3.GetValueOrDefault("quhao"),
-                        Name = countyName,
-                        Pid = city.Id,
-                        Level = 3
-                    };
-                    list.Add(county);
-                }
+                currentCity = null;
+                regions.Add(currentProvince);
+                continue;
             }
-            //按省份同步快速写入提升同步效率，全部一次性写入容易出现从统计局获取数据失败
-            await _sysRegionRep.Context.Fastest<SysRegion>().BulkCopyAsync(list);
+
+            if (currentProvince == null)
+                throw Oops.Oh("官方行政区域数据缺少省级父节点，原数据未变更");
+
+            if (level == 2)
+            {
+                currentCity = new SysRegion
+                {
+                    Id = YitIdHelper.NextId(),
+                    Pid = currentProvince.Id,
+                    Name = name,
+                    Code = code,
+                    Level = 2,
+                    OrderNo = NextOrder(2),
+                };
+                if (syncLevel >= 2) regions.Add(currentCity);
+                continue;
+            }
+
+            if (syncLevel >= 3)
+            {
+                regions.Add(new SysRegion
+                {
+                    Id = YitIdHelper.NextId(),
+                    Pid = currentCity?.Id ?? currentProvince.Id,
+                    Name = name,
+                    Code = code,
+                    Level = 3,
+                    OrderNo = NextOrder(3),
+                });
+            }
         }
 
-        // 获取选择数据
-        async Task<List<Dictionary<string, string>>> GetSelectList(string prov, string prefecture = null)
+        if (regions.Count(u => u.Level == 1) < 30)
+            throw Oops.Oh("官方行政区域省级数据数量异常，原数据未变更");
+
+        return regions;
+
+        int NextOrder(int level)
         {
-            var data = "";
-            if (!string.IsNullOrWhiteSpace(prov)) data += $"shengji={prov}";
-            if (!string.IsNullOrWhiteSpace(prefecture)) data += $"&diji={prefecture}";
-            var json = await client.PostFormAsync("http://xzqh.mca.gov.cn/selectJson", data);
-            return json.ToJsonEntity<List<Dictionary<string, string>>>();
+            orderByLevel[level] = orderByLevel.GetValueOrDefault(level) + 1;
+            return orderByLevel[level] * 10;
         }
+    }
+
+    private async Task<SysRegion?> ResolveParent(long pid)
+    {
+        if (pid == 0) return null;
+
+        var parent = await _sysRegionRep.GetFirstAsync(u => u.Id == pid);
+        parent ??= await _sysRegionRep.GetFirstAsync(u => u.Code == pid.ToString());
+        return parent ?? throw Oops.Oh(ErrorCodeEnum.D2000);
     }
 }

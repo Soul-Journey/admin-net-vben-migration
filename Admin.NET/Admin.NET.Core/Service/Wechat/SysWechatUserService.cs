@@ -25,12 +25,13 @@ public class SysWechatUserService : IDynamicApiController, ITransient
     /// <param name="input"></param>
     /// <returns></returns>
     [DisplayName("获取微信用户列表")]
-    public async Task<SqlSugarPagedList<SysWechatUser>> Page(WechatUserInput input)
+    public async Task<SqlSugarPagedList<WechatUserOutput>> Page(WechatUserInput input)
     {
         return await _sysWechatUserRep.AsQueryable()
             .WhereIF(!string.IsNullOrWhiteSpace(input.NickName), u => u.NickName.Contains(input.NickName))
             .WhereIF(!string.IsNullOrWhiteSpace(input.Mobile), u => u.Mobile.Contains(input.Mobile))
             .OrderBy(u => u.Id, OrderByType.Desc)
+            .Select<WechatUserOutput>()
             .ToPagedListAsync(input.Page, input.PageSize);
     }
 
@@ -41,8 +42,12 @@ public class SysWechatUserService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Add"), HttpPost]
     [DisplayName("增加微信用户")]
-    public async Task AddWechatUser(SysWechatUser input)
+    public async Task AddWechatUser(SaveWechatUserInput input)
     {
+        input.OpenId = input.OpenId.Trim();
+        if (await _sysWechatUserRep.IsAnyAsync(u => u.PlatformType == input.PlatformType && u.OpenId == input.OpenId))
+            throw Oops.Oh("该平台的 OpenId 已存在");
+
         await _sysWechatUserRep.InsertAsync(input.Adapt<SysWechatUser>());
     }
 
@@ -53,10 +58,29 @@ public class SysWechatUserService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Update"), HttpPost]
     [DisplayName("更新微信用户")]
-    public async Task UpdateWechatUser(SysWechatUser input)
+    public async Task UpdateWechatUser(SaveWechatUserInput input)
     {
+        input.OpenId = input.OpenId.Trim();
+        if (await _sysWechatUserRep.IsAnyAsync(u => u.Id != input.Id && u.PlatformType == input.PlatformType && u.OpenId == input.OpenId))
+            throw Oops.Oh("该平台的 OpenId 已存在");
+
         var weChatUser = input.Adapt<SysWechatUser>();
-        await _sysWechatUserRep.AsUpdateable(weChatUser).IgnoreColumns(true).ExecuteCommandAsync();
+        await _sysWechatUserRep.AsUpdateable(weChatUser)
+            .UpdateColumns(u => new
+            {
+                u.PlatformType,
+                u.OpenId,
+                u.UnionId,
+                u.NickName,
+                u.Avatar,
+                u.Mobile,
+                u.Sex,
+                u.Language,
+                u.City,
+                u.Province,
+                u.Country,
+            })
+            .ExecuteCommandAsync();
     }
 
     /// <summary>

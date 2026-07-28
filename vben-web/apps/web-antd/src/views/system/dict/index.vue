@@ -45,6 +45,7 @@ import {
   updateDictDataApi,
   updateDictTypeApi,
 } from '#/api';
+import { ADMIN_PAGINATION_PROPS } from '#/utils/pagination';
 
 defineOptions({ name: 'AdminNetSystemDict' });
 
@@ -121,22 +122,47 @@ const dataColumns: TableColumnsType<SysDictDataRecord> = [
 
 const typeRules: Record<string, Rule[]> = {
   code: [
-    { message: '请输入字典编码', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入字典编码',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   name: [
-    { message: '请输入字典名称', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入字典名称',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   sysFlag: [
-    { message: '请选择是否内置', required: true, trigger: 'change', type: 'number' },
+    {
+      message: '请选择是否内置',
+      required: true,
+      trigger: 'change',
+      type: 'number',
+    },
   ],
 };
 
 const dataRules: Record<string, Rule[]> = {
   label: [
-    { message: '请输入显示文本', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入显示文本',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   value: [
-    { message: '请输入字典值', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入字典值',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
 };
 
@@ -159,7 +185,8 @@ const yesNoOptions = [
 ];
 
 const isSuperAdmin = computed(
-  () => Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
+  () =>
+    Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
 );
 
 const selectedEditable = computed(() =>
@@ -516,7 +543,8 @@ onMounted(async () => {
           :columns="typeColumns"
           :custom-row="
             (record) => ({
-              class: selectedDict?.id === asDictType(record).id ? 'is-selected' : '',
+              class:
+                selectedDict?.id === asDictType(record).id ? 'is-selected' : '',
               onClick: () => selectDictType(asDictType(record)),
             })
           "
@@ -529,7 +557,9 @@ onMounted(async () => {
         >
           <template #bodyCell="{ column, index, record }">
             <template v-if="column.key === 'index'">
-              {{ (typePagination.page - 1) * typePagination.pageSize + index + 1 }}
+              {{
+                (typePagination.page - 1) * typePagination.pageSize + index + 1
+              }}
             </template>
             <template v-else-if="column.key === 'sysFlag'">
               <Tag :color="getYesNoMeta(asDictType(record).sysFlag).color">
@@ -600,7 +630,10 @@ onMounted(async () => {
                 <Tooltip title="删除">
                   <Button
                     v-if="can('sysDictType:delete')"
-                    :disabled="asDictType(record).sysFlag === YES || !hasDictPermission(asDictType(record))"
+                    :disabled="
+                      asDictType(record).sysFlag === YES ||
+                      !hasDictPermission(asDictType(record))
+                    "
                     danger
                     size="small"
                     type="link"
@@ -618,12 +651,11 @@ onMounted(async () => {
 
         <div class="table-footer">
           <Pagination
+            v-bind="ADMIN_PAGINATION_PROPS"
             v-model:current="typePagination.page"
             v-model:page-size="typePagination.pageSize"
-            :page-size-options="['10', '20', '50', '100']"
             :show-total="(total) => `共 ${total} 条`"
             :total="typePagination.total"
-            show-size-changer
             size="small"
             @change="handleTypePageChange"
             @show-size-change="handleTypePageChange"
@@ -636,7 +668,9 @@ onMounted(async () => {
           <div>
             <div class="panel-title">
               字典值
-              <Tag v-if="selectedDict" color="blue">{{ selectedDict.name }}</Tag>
+              <Tag v-if="selectedDict" color="blue">
+                {{ selectedDict.name }}
+              </Tag>
             </div>
             <div class="panel-subtitle">
               {{ selectedDict ? selectedDict.code : '请先选择一个字典' }}
@@ -655,7 +689,11 @@ onMounted(async () => {
           </Form.Item>
           <Form.Item>
             <Space :size="8">
-              <Button :disabled="!selectedDict" type="primary" @click="handleDataSearch">
+              <Button
+                :disabled="!selectedDict"
+                type="primary"
+                @click="handleDataSearch"
+              >
                 <template #icon>
                   <IconifyIcon icon="lucide:search" />
                 </template>
@@ -694,7 +732,11 @@ onMounted(async () => {
           >
             <template #bodyCell="{ column, index, record }">
               <template v-if="column.key === 'index'">
-                {{ (dataPagination.page - 1) * dataPagination.pageSize + index + 1 }}
+                {{
+                  (dataPagination.page - 1) * dataPagination.pageSize +
+                  index +
+                  1
+                }}
               </template>
               <template v-else-if="column.key === 'label'">
                 <Tag
@@ -718,9 +760,9 @@ onMounted(async () => {
               <template v-else-if="column.key === 'actions'">
                 <Space :size="4">
                   <Popover
-                  overlay-class-name="dict-record-popover"
-                  placement="left"
-                  trigger="click"
+                    overlay-class-name="dict-record-popover"
+                    placement="left"
+                    trigger="click"
                   >
                     <template #content>
                       <Descriptions
@@ -804,12 +846,11 @@ onMounted(async () => {
 
           <div class="table-footer">
             <Pagination
+              v-bind="ADMIN_PAGINATION_PROPS"
               v-model:current="dataPagination.page"
               v-model:page-size="dataPagination.pageSize"
-              :page-size-options="['10', '20', '50', '100']"
               :show-total="(total) => `共 ${total} 条`"
               :total="dataPagination.total"
-              show-size-changer
               size="small"
               @change="handleDataPageChange"
               @show-size-change="handleDataPageChange"
@@ -831,7 +872,7 @@ onMounted(async () => {
       centered
       class="dict-type-modal"
       destroy-on-close
-      width="520"
+      :width="520"
       @cancel="typeFormRef?.clearValidate()"
     >
       <Form
@@ -862,7 +903,10 @@ onMounted(async () => {
           </Col>
           <Col :span="12">
             <Form.Item label="状态" name="status">
-              <Radio.Group v-model:value="typeFormState.status" :options="statusOptions" />
+              <Radio.Group
+                v-model:value="typeFormState.status"
+                :options="statusOptions"
+              />
             </Form.Item>
           </Col>
           <Col :span="12">
@@ -908,7 +952,7 @@ onMounted(async () => {
       centered
       class="dict-data-modal"
       destroy-on-close
-      width="480"
+      :width="480"
       @cancel="dataFormRef?.clearValidate()"
     >
       <Form
@@ -953,7 +997,10 @@ onMounted(async () => {
           </Col>
           <Col :span="12">
             <Form.Item label="状态" name="status">
-              <Radio.Group v-model:value="dataFormState.status" :options="statusOptions" />
+              <Radio.Group
+                v-model:value="dataFormState.status"
+                :options="statusOptions"
+              />
             </Form.Item>
           </Col>
           <Col :span="12">
@@ -1020,40 +1067,40 @@ onMounted(async () => {
 
 .dict-grid {
   display: grid;
-  min-height: 0;
   grid-template-columns: minmax(420px, 1fr) minmax(480px, 1fr);
   gap: 12px;
+  min-height: 0;
 }
 
 .panel {
   min-width: 0;
   padding: 12px;
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border) / 72%);
   border-radius: 8px;
-  background: hsl(var(--background));
 }
 
 .panel-head {
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
   margin-bottom: 10px;
 }
 
 .panel-title {
   display: flex;
-  align-items: center;
   gap: 8px;
-  color: hsl(var(--foreground));
+  align-items: center;
   font-size: 14px;
   font-weight: 650;
+  color: hsl(var(--foreground));
 }
 
 .panel-subtitle {
   margin-top: 2px;
-  color: hsl(var(--muted-foreground));
   font-size: 12px;
+  color: hsl(var(--muted-foreground));
 }
 
 .query-form {
@@ -1077,26 +1124,26 @@ onMounted(async () => {
 }
 
 .record-icon-button:hover {
-  background: hsl(var(--primary) / 8%);
   color: hsl(var(--primary));
+  background: hsl(var(--primary) / 8%);
 }
 
 .empty-panel {
   display: grid;
-  min-height: 420px;
   place-items: center;
+  min-height: 420px;
+  background: hsl(var(--muted) / 18%);
   border: 1px dashed hsl(var(--border));
   border-radius: 8px;
-  background: hsl(var(--muted) / 18%);
 }
 
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  margin: 14px -18px -14px;
   padding: 10px 18px;
-  border-top: 1px solid hsl(var(--border) / 72%);
+  margin: 14px -18px -14px;
   background: hsl(var(--background));
+  border-top: 1px solid hsl(var(--border) / 72%);
 }
 
 .tag-type-radio {

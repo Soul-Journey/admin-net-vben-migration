@@ -85,5 +85,20 @@ public class StressTestOutput
     /// P999 响应时间（毫秒）
     /// </summary>
     public double Percentile999ResponseTime { get; set; }
+
+    /// <summary>
+    /// 是否达到服务端最长执行时间
+    /// </summary>
+    public bool TimedOut { get; set; }
 }
 
+/// <summary>
+/// 允许执行压力测试的接口
+/// </summary>
+public class StressTestEndpointOutput
+{
+    public string GroupName { get; set; }
+    public string DisplayName { get; set; }
+    public string Route { get; set; }
+    public string Method { get; set; }
+}

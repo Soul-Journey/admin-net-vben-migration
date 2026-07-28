@@ -50,13 +50,14 @@ public class SysMenuService : IDynamicApiController, ITransient
         {
             var menuList = await query.Where(u => u.Type != MenuTypeEnum.Btn && u.Status == StatusEnum.Enable)
                 .OrderBy(u => new { u.OrderNo, u.Id })
+                .Distinct()
                 .ToTreeAsync(u => u.Children, u => u.Pid, 0);
             return menuList.Adapt<List<MenuOutput>>();
         }
 
         var menuIdList = await GetMenuIdList();
         var menuTree = await query.Where(u => u.Type != MenuTypeEnum.Btn && u.Status == StatusEnum.Enable)
-            .OrderBy(u => new { u.OrderNo, u.Id }).ToTreeAsync(u => u.Children, u => u.Pid, 0, menuIdList.Select(d => (object)d).ToArray());
+            .OrderBy(u => new { u.OrderNo, u.Id }).Distinct().ToTreeAsync(u => u.Children, u => u.Pid, 0, menuIdList.Select(d => (object)d).ToArray());
         return menuTree.Adapt<List<MenuOutput>>();
     }
 
@@ -207,6 +208,20 @@ public class SysMenuService : IDynamicApiController, ITransient
         else
         {
             menu.Permission = null;
+
+            if (string.IsNullOrWhiteSpace(menu.OutLink))
+            {
+                menu.OutLink = null;
+                menu.IsIframe = false;
+            }
+            else
+            {
+                menu.OutLink = menu.OutLink.Trim();
+                if (!Uri.TryCreate(menu.OutLink, UriKind.Absolute, out var uri)
+                    || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+                    || !string.IsNullOrEmpty(uri.UserInfo))
+                    throw Oops.Oh("链接地址仅支持不含账号密码的 http/https 绝对地址");
+            }
         }
     }
 

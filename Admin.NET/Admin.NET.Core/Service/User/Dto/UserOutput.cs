@@ -28,3 +28,27 @@ public class UserOutput : SysUser
     /// </summary>
     public string DomainAccount { get; set; }
 }
+
+/// <summary>
+/// 当前用户个人资料安全输出
+/// </summary>
+public class PersonalInfoOutput
+{
+    public long Id { get; set; }
+    public string Account { get; set; }
+    public string RealName { get; set; }
+    public string? NickName { get; set; }
+    public string? Avatar { get; set; }
+    public GenderEnum Sex { get; set; }
+    public DateTime? Birthday { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public string? Address { get; set; }
+    public string? Remark { get; set; }
+    public string? Introduction { get; set; }
+    public string? Signature { get; set; }
+    public long OrgId { get; set; }
+    public long PosId { get; set; }
+    public string? OrgName { get; set; }
+    public string? PosName { get; set; }
+}

@@ -9,47 +9,48 @@ const legacyPlaceholder = 'adminnet/legacy-placeholder';
 
 export const ADMIN_NET_COMPONENT_ALLOWLIST: Record<string, string> = {
   Layout: legacyPlaceholder,
-  'approvalFlow/index': legacyPlaceholder,
+  'approvalFlow/index': 'approvalFlow/index',
+  'about/index': 'about/index',
   'elive/index': legacyPlaceholder,
   'home/index': 'dashboard/workspace/index',
-  'home/notice/index': legacyPlaceholder,
+  'home/notice/index': 'home/notice/index',
   'layout/routerView/parent': legacyPlaceholder,
   'mqttx/index': legacyPlaceholder,
-  'system/cache/index': legacyPlaceholder,
-  'system/codeGen/index': legacyPlaceholder,
-  'system/config/index': legacyPlaceholder,
-  'system/database/index': legacyPlaceholder,
+  'system/cache/index': 'system/cache/index',
+  'system/codeGen/index': 'system/codeGen/index',
+  'system/config/index': 'system/config/index',
+  'system/database/index': 'system/database/index',
   'system/dict/index': 'system/dict/index',
-  'system/file/index': legacyPlaceholder,
-  'system/formDes/index': legacyPlaceholder,
-  'system/infoSetting/index': legacyPlaceholder,
-  'system/job/dashboard': legacyPlaceholder,
-  'system/job/index': legacyPlaceholder,
-  'system/ldap/index': legacyPlaceholder,
-  'system/log/difflog/index': legacyPlaceholder,
-  'system/log/exlog/index': legacyPlaceholder,
-  'system/log/oplog/index': legacyPlaceholder,
-  'system/log/vislog/index': legacyPlaceholder,
+  'system/file/index': 'system/file/index',
+  'system/formDes/index': 'system/formDes/index',
+  'system/infoSetting/index': 'system/infoSetting/index',
+  'system/job/dashboard': 'system/job/dashboard',
+  'system/job/index': 'system/job/index',
+  'system/ldap/index': 'system/ldap/index',
+  'system/log/difflog/index': 'system/log/difflog/index',
+  'system/log/exlog/index': 'system/log/exlog/index',
+  'system/log/oplog/index': 'system/log/oplog/index',
+  'system/log/vislog/index': 'system/log/vislog/index',
   'system/menu/index': 'system/menu/index',
-  'system/notice/index': legacyPlaceholder,
+  'system/notice/index': 'system/notice/index',
   'system/onlineUser/index': legacyPlaceholder,
-  'system/openAccess/index': legacyPlaceholder,
+  'system/openAccess/index': 'system/openAccess/index',
   'system/org/index': 'system/org/index',
-  'system/plugin/index': legacyPlaceholder,
+  'system/plugin/index': 'system/plugin/index',
   'system/pos/index': 'system/pos/index',
-  'system/print/index': legacyPlaceholder,
-  'system/region/index': legacyPlaceholder,
+  'system/print/index': 'system/print/index',
+  'system/region/index': 'system/region/index',
   'system/role/index': 'system/role/index',
-  'system/server/index': legacyPlaceholder,
-  'system/stressTest/index': legacyPlaceholder,
-  'system/template/index': legacyPlaceholder,
+  'system/server/index': 'system/server/index',
+  'system/stressTest/index': 'system/stressTest/index',
+  'system/template/index': 'system/template/index',
   'system/tenant/index': 'system/tenant/index',
-  'system/update/index': legacyPlaceholder,
-  'system/user/component/userCenter': legacyPlaceholder,
+  'system/update/index': 'system/update/index',
+  'system/user/component/userCenter': 'system/user/component/userCenter',
   'system/user/index': 'system/user/index',
-  'system/userRegWay/index': legacyPlaceholder,
-  'system/weChatPay/index': legacyPlaceholder,
-  'system/weChatUser/index': legacyPlaceholder,
+  'system/userRegWay/index': 'system/userRegWay/index',
+  'system/weChatPay/index': 'system/weChatPay/index',
+  'system/weChatUser/index': 'system/weChatUser/index',
 };
 
 const ICON_MAP: Record<string, string> = {
@@ -75,6 +76,59 @@ const ICON_MAP: Record<string, string> = {
   'ele-UserFilled': 'lucide:user-check',
 };
 
+const ROUTE_ICON_MAP: Record<string, string> = {
+  '/about': 'lucide:info',
+  '/dashboard': 'lucide:layout-dashboard',
+  '/dashboard/home': 'lucide:house',
+  '/dashboard/notice': 'lucide:mail',
+  '/develop': 'lucide:code-xml',
+  '/develop/api': 'lucide:braces',
+  '/develop/codeGen': 'lucide:braces',
+  '/develop/database': 'lucide:database',
+  '/develop/formDes': 'lucide:panels-top-left',
+  '/develop/stressTest': 'lucide:gauge',
+  '/doc': 'lucide:book-open',
+  '/doc/SqlSugar': 'lucide:database',
+  '/doc/admin': 'lucide:book-open-check',
+  '/doc/element': 'lucide:panels-top-left',
+  '/doc/furion': 'lucide:blocks',
+  '/log': 'lucide:scroll-text',
+  '/log/difflog': 'lucide:file-diff',
+  '/log/exlog': 'lucide:triangle-alert',
+  '/log/oplog': 'lucide:clipboard-list',
+  '/log/vislog': 'lucide:mouse-pointer-click',
+  '/platform': 'lucide:sliders-horizontal',
+  '/platform/approvalFlow': 'lucide:workflow',
+  '/platform/cache': 'lucide:database-zap',
+  '/platform/config': 'lucide:settings-2',
+  '/platform/dict': 'lucide:book-open',
+  '/platform/file': 'lucide:folder-open',
+  '/platform/infoSetting': 'lucide:settings',
+  '/platform/job': 'lucide:timer',
+  '/platform/menu': 'lucide:list-tree',
+  '/platform/openAccess': 'lucide:waypoints',
+  '/platform/plugin': 'lucide:plug',
+  '/platform/print': 'lucide:printer',
+  '/platform/region': 'lucide:map',
+  '/platform/regWay': 'lucide:user-round-plus',
+  '/platform/server': 'lucide:monitor-cog',
+  '/platform/template': 'lucide:files',
+  '/platform/tenant': 'lucide:building-2',
+  '/platform/update': 'lucide:refresh-cw',
+  '/platform/wechatpay': 'lucide:wallet-cards',
+  '/system': 'lucide:shield-check',
+  '/system/ldap': 'lucide:network',
+  '/system/notice': 'lucide:bell',
+  '/system/org': 'lucide:building',
+  '/system/pos': 'lucide:briefcase-business',
+  '/system/role': 'lucide:users-round',
+  '/system/user': 'lucide:user-round',
+  '/system/userCenter': 'lucide:circle-user-round',
+  '/system/weChatUser': 'lucide:messages-square',
+};
+
+const DEFAULT_MENU_ICON = 'lucide:circle-dot';
+
 function cleanPath(path?: null | string, fallback?: string) {
   const source = path?.trim() || fallback || '/adminnet/unnamed';
   const normalized = source.startsWith('/') ? source : `/${source}`;
@@ -83,10 +137,12 @@ function cleanPath(path?: null | string, fallback?: string) {
 
 function cleanRouteName(item: AdminNetMenuItem, path: string) {
   const raw = item.name || item.meta?.title || path;
-  return String(raw)
-    .replaceAll(/[^A-Z_a-z0-9-]/g, '-')
-    .replaceAll(/^-+|-+$/g, '')
-    || `AdminNetRoute${item.id ?? Math.random().toString(36).slice(2)}`;
+  return (
+    String(raw)
+      .replaceAll(/[^A-Z_a-z0-9-]/g, '-')
+      .replaceAll(/^-+|-+$/g, '') ||
+    `AdminNetRoute${item.id ?? Math.random().toString(36).slice(2)}`
+  );
 }
 
 function normalizeComponent(component?: null | string) {
@@ -104,11 +160,37 @@ function normalizeComponent(component?: null | string) {
   return ADMIN_NET_COMPONENT_ALLOWLIST[cleaned] ?? legacyPlaceholder;
 }
 
-function normalizeIcon(icon?: null | string) {
+function normalizeIcon(icon: null | string | undefined, path: string) {
+  const routeIcon = ROUTE_ICON_MAP[path];
   if (!icon) {
+    return routeIcon ?? DEFAULT_MENU_ICON;
+  }
+
+  const mappedLegacyIcon = ICON_MAP[icon];
+  if (mappedLegacyIcon) {
+    return mappedLegacyIcon;
+  }
+
+  // Unmapped Element Plus names cannot be converted to Lucide by prefix alone.
+  // Prefer the route-specific icon so legacy menu data never renders a blank slot.
+  if (icon.startsWith('ele-')) {
+    return routeIcon ?? DEFAULT_MENU_ICON;
+  }
+
+  return icon.includes(':') ? icon : (routeIcon ?? DEFAULT_MENU_ICON);
+}
+
+function normalizeExternalLink(link?: null | string) {
+  const value = link?.trim();
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol)) return undefined;
+    if (url.username || url.password) return undefined;
+    return value;
+  } catch {
     return undefined;
   }
-  return ICON_MAP[icon] ?? icon.replace(/^ele-/, 'lucide:');
 }
 
 function sortRoutes(routes: RouteRecordStringComponent[]) {
@@ -129,7 +211,7 @@ function toRoute(item: AdminNetMenuItem): null | RouteRecordStringComponent {
     .map((child) => toRoute(child))
     .filter(Boolean) as RouteRecordStringComponent[];
   const title = item.meta?.title || item.name || path;
-  const externalLink = item.meta?.isLink || undefined;
+  const externalLink = normalizeExternalLink(item.meta?.isLink);
 
   return {
     children: sortRoutes(children),
@@ -137,7 +219,7 @@ function toRoute(item: AdminNetMenuItem): null | RouteRecordStringComponent {
     meta: {
       affixTab: item.meta?.isAffix,
       hideInMenu: item.meta?.isHide,
-      icon: normalizeIcon(item.meta?.icon),
+      icon: normalizeIcon(item.meta?.icon, path),
       iframeSrc: item.meta?.isIframe ? externalLink || path : undefined,
       keepAlive: item.meta?.isKeepAlive,
       link: item.meta?.isIframe ? undefined : externalLink,

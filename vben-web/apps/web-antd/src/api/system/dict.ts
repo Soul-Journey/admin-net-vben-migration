@@ -92,7 +92,9 @@ function normalizeDictType(item: unknown): SysDictTypeRecord {
   return {
     code: toStringValue(record.code ?? record.Code) ?? '',
     createTime: toStringValue(record.createTime ?? record.CreateTime),
-    createUserName: toStringValue(record.createUserName ?? record.CreateUserName),
+    createUserName: toStringValue(
+      record.createUserName ?? record.CreateUserName,
+    ),
     id: toNumber(record.id ?? record.Id) ?? 0,
     name: toStringValue(record.name ?? record.Name) ?? '',
     orderNo: toNumber(record.orderNo ?? record.OrderNo),
@@ -100,7 +102,9 @@ function normalizeDictType(item: unknown): SysDictTypeRecord {
     status: toNumber(record.status ?? record.Status),
     sysFlag: toNumber(record.sysFlag ?? record.SysFlag),
     updateTime: toStringValue(record.updateTime ?? record.UpdateTime),
-    updateUserName: toStringValue(record.updateUserName ?? record.UpdateUserName),
+    updateUserName: toStringValue(
+      record.updateUserName ?? record.UpdateUserName,
+    ),
   };
 }
 
@@ -110,7 +114,9 @@ function normalizeDictData(item: unknown): SysDictDataRecord {
     classSetting: toStringValue(record.classSetting ?? record.ClassSetting),
     code: toStringValue(record.code ?? record.Code),
     createTime: toStringValue(record.createTime ?? record.CreateTime),
-    createUserName: toStringValue(record.createUserName ?? record.CreateUserName),
+    createUserName: toStringValue(
+      record.createUserName ?? record.CreateUserName,
+    ),
     dictTypeId: toNumber(record.dictTypeId ?? record.DictTypeId),
     extData: toStringValue(record.extData ?? record.ExtData),
     id: toNumber(record.id ?? record.Id) ?? 0,
@@ -121,7 +127,9 @@ function normalizeDictData(item: unknown): SysDictDataRecord {
     styleSetting: toStringValue(record.styleSetting ?? record.StyleSetting),
     tagType: toStringValue(record.tagType ?? record.TagType),
     updateTime: toStringValue(record.updateTime ?? record.UpdateTime),
-    updateUserName: toStringValue(record.updateUserName ?? record.UpdateUserName),
+    updateUserName: toStringValue(
+      record.updateUserName ?? record.UpdateUserName,
+    ),
     value: toStringValue(record.value ?? record.Value) ?? '',
   };
 }
@@ -176,6 +184,11 @@ export function updateDictDataApi(params: SaveDictDataParams & { id: number }) {
 
 export function deleteDictDataApi(id: number) {
   return requestClient.post<unknown>('/sysDictData/delete', { id });
+}
+
+export async function listDictTypesApi() {
+  const data = await requestClient.get<unknown[]>('/sysDictType/list');
+  return Array.isArray(data) ? data.map((item) => normalizeDictType(item)) : [];
 }
 
 export async function getDictDataByCodeApi(code: string, status?: number) {

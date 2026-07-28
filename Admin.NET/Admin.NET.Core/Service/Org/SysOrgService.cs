@@ -139,11 +139,58 @@ public class SysOrgService : IDynamicApiController, ITransient
     /// <param name="orgs"></param>
     /// <returns></returns>
     [NonAction]
-    public async Task BatchAddOrgs(List<SysOrg> orgs)
+    public async Task<SyncLdapResult> BatchAddOrgs(long tenantId, List<SysOrg> orgs)
     {
+        var incoming = orgs
+            .Where(u => !string.IsNullOrWhiteSpace(u.Code) && !string.IsNullOrWhiteSpace(u.Name))
+            .GroupBy(u => u.Code!, StringComparer.OrdinalIgnoreCase)
+            .Select(u => u.First())
+            .ToList();
+        if (incoming.Count == 0) return new SyncLdapResult();
+
+        var existing = await _sysOrgRep.AsQueryable().ClearFilter()
+            .Where(u => u.TenantId == tenantId && u.IsDelete == false && u.Code != null)
+            .ToListAsync();
+        var existingByCode = existing
+            .GroupBy(u => u.Code!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(u => u.Key, u => u.First(), StringComparer.OrdinalIgnoreCase);
+
+        var idMap = new Dictionary<long, long>();
+        foreach (var org in incoming)
+        {
+            var finalId = existingByCode.TryGetValue(org.Code!, out var current)
+                ? current.Id
+                : YitIdHelper.NextId();
+            idMap[org.Id] = finalId;
+        }
+
+        var insertList = new List<SysOrg>();
+        var updateList = new List<SysOrg>();
+        foreach (var org in incoming)
+        {
+            org.Id = idMap[org.Id];
+            org.Pid = org.Pid == 0 ? 0 : idMap.GetValueOrDefault(org.Pid, 0);
+            org.TenantId = tenantId;
+            org.Status = StatusEnum.Enable;
+
+            if (existingByCode.ContainsKey(org.Code!)) updateList.Add(org);
+            else insertList.Add(org);
+        }
+
+        if (insertList.Count > 0)
+            await _sysOrgRep.AsInsertable(insertList).ExecuteCommandAsync();
+        if (updateList.Count > 0)
+            await _sysOrgRep.AsUpdateable(updateList)
+                .UpdateColumns(u => new { u.Name, u.Pid, u.Level, u.OrderNo, u.Status })
+                .ExecuteCommandAsync();
+
         DeleteAllUserOrgCache(0, 0);
-        await _sysOrgRep.AsDeleteable().ExecuteCommandAsync();
-        await _sysOrgRep.AsInsertable(orgs).ExecuteCommandAsync();
+        return new SyncLdapResult
+        {
+            Added = insertList.Count,
+            Updated = updateList.Count,
+            Total = incoming.Count,
+        };
     }
 
     /// <summary>

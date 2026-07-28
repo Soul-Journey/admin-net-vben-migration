@@ -22,3 +22,65 @@ public class WechatUserInput : BasePageInput
 public class DeleteWechatUserInput : BaseIdInput
 {
 }
+
+/// <summary>
+/// 微信账号安全输出（不向管理端返回会话密钥和访问令牌）
+/// </summary>
+public class WechatUserOutput
+{
+    public long Id { get; set; }
+    public long UserId { get; set; }
+    public PlatformTypeEnum PlatformType { get; set; }
+    public string OpenId { get; set; }
+    public string? UnionId { get; set; }
+    public string? NickName { get; set; }
+    public string? Avatar { get; set; }
+    public string? Mobile { get; set; }
+    public int? Sex { get; set; }
+    public string? Language { get; set; }
+    public string? City { get; set; }
+    public string? Province { get; set; }
+    public string? Country { get; set; }
+    public DateTime CreateTime { get; set; }
+    public DateTime? UpdateTime { get; set; }
+    public string? CreateUserName { get; set; }
+    public string? UpdateUserName { get; set; }
+}
+
+/// <summary>
+/// 微信账号管理端保存参数（令牌字段只允许由 OAuth/微信服务维护）
+/// </summary>
+public class SaveWechatUserInput : BaseIdInput
+{
+    [Required]
+    public PlatformTypeEnum PlatformType { get; set; }
+
+    [Required, MaxLength(64)]
+    public string OpenId { get; set; }
+
+    [MaxLength(64)]
+    public string? UnionId { get; set; }
+
+    [MaxLength(64)]
+    public string? NickName { get; set; }
+
+    [MaxLength(256)]
+    public string? Avatar { get; set; }
+
+    [MaxLength(16)]
+    public string? Mobile { get; set; }
+
+    public int? Sex { get; set; }
+
+    [MaxLength(64)]
+    public string? Language { get; set; }
+
+    [MaxLength(64)]
+    public string? City { get; set; }
+
+    [MaxLength(64)]
+    public string? Province { get; set; }
+
+    [MaxLength(64)]
+    public string? Country { get; set; }
+}

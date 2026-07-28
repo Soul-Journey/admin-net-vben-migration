@@ -14,17 +14,22 @@ namespace Admin.NET.Core.Service;
 [ApiDescriptionSettings(Order = 250)]
 public class SysDatabaseService : IDynamicApiController, ITransient
 {
+    private static readonly SemaphoreSlim DatabaseWriteLock = new(1, 1);
+    private static readonly Regex DatabaseIdentifierRegex = new("^[\\p{L}_][\\p{L}\\p{N}_]{0,127}$", RegexOptions.Compiled);
     private readonly ISqlSugarClient _db;
     private readonly IViewEngine _viewEngine;
     private readonly CodeGenOptions _codeGenOptions;
+    private readonly UserManager _userManager;
 
     public SysDatabaseService(ISqlSugarClient db,
         IViewEngine viewEngine,
-        IOptions<CodeGenOptions> codeGenOptions)
+        IOptions<CodeGenOptions> codeGenOptions,
+        UserManager userManager)
     {
         _db = db;
         _viewEngine = viewEngine;
         _codeGenOptions = codeGenOptions.Value;
+        _userManager = userManager;
     }
 
     /// <summary>
@@ -34,6 +39,7 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("获取库列表")]
     public List<string> GetList()
     {
+        EnsureSuperAdmin();
         return App.GetOptions<DbConnectionOptions>().ConnectionConfigs.Select(u => u.ConfigId.ToString()).ToList();
     }
 
@@ -44,6 +50,7 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("获取可视化库表结构")]
     public VisualDbTable GetVisualDbTable()
     {
+        EnsureSuperAdmin();
         var visualTableList = new List<VisualTable>();
         var visualColumnList = new List<VisualColumn>();
         var columnRelationList = new List<ColumnRelation>();
@@ -108,6 +115,8 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("获取字段列表")]
     public List<DbColumnOutput> GetColumnList(string tableName, string configId = SqlSugarConst.MainConfigId)
     {
+        EnsureDatabaseAccess(configId);
+        EnsureIdentifier(tableName, "表名");
         var db = _db.AsTenant().GetConnectionScope(configId);
         return string.IsNullOrWhiteSpace(tableName) ? new List<DbColumnOutput>() : db.DbMaintenance.GetColumnInfosByTableName(tableName, false).Adapt<List<DbColumnOutput>>();
     }
@@ -120,6 +129,7 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("获取数据库数据类型列表")]
     public List<string> GetDbTypeList(string configId = SqlSugarConst.MainConfigId)
     {
+        EnsureDatabaseAccess(configId);
         var db = _db.AsTenant().GetConnectionScope(configId);
         return db.DbMaintenance.GetDbTypes().OrderBy(u => u).ToList();
     }
@@ -132,6 +142,9 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("增加列")]
     public void AddColumn(DbColumnInput input)
     {
+        EnsureDatabaseAccess(input.ConfigId);
+        EnsureIdentifier(input.TableName, "表名");
+        ValidateColumn(input);
         var column = new DbColumnInfo
         {
             ColumnDescription = input.ColumnDescription,
@@ -143,10 +156,22 @@ public class SysDatabaseService : IDynamicApiController, ITransient
             DecimalDigits = input.DecimalDigits,
             DataType = input.DataType
         };
-        var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
-        db.DbMaintenance.AddColumn(input.TableName, column);
-        db.DbMaintenance.AddColumnRemark(input.DbColumnName, input.TableName, input.ColumnDescription);
-        if (column.IsPrimarykey) db.DbMaintenance.AddPrimaryKey(input.TableName, input.DbColumnName);
+        DatabaseWriteLock.Wait();
+        try
+        {
+            var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
+            EnsureTableExists(db, input.TableName);
+            if (db.DbMaintenance.GetColumnInfosByTableName(input.TableName, false).Any(u => u.DbColumnName.Equals(input.DbColumnName, StringComparison.OrdinalIgnoreCase)))
+                throw Oops.Oh($"字段 {input.DbColumnName} 已存在");
+            db.DbMaintenance.AddColumn(input.TableName, column);
+            if (!string.IsNullOrWhiteSpace(input.ColumnDescription))
+                db.DbMaintenance.AddColumnRemark(input.DbColumnName, input.TableName, input.ColumnDescription);
+            if (column.IsPrimarykey) db.DbMaintenance.AddPrimaryKey(input.TableName, input.DbColumnName);
+        }
+        finally
+        {
+            DatabaseWriteLock.Release();
+        }
     }
 
     /// <summary>
@@ -157,8 +182,24 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("删除列")]
     public void DeleteColumn(DeleteDbColumnInput input)
     {
-        var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
-        db.DbMaintenance.DropColumn(input.TableName, input.DbColumnName);
+        EnsureDatabaseAccess(input.ConfigId);
+        EnsureIdentifier(input.TableName, "表名");
+        EnsureIdentifier(input.DbColumnName, "字段名");
+        DatabaseWriteLock.Wait();
+        try
+        {
+            var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
+            EnsureTableExists(db, input.TableName);
+            var columns = db.DbMaintenance.GetColumnInfosByTableName(input.TableName, false);
+            var column = columns.FirstOrDefault(u => u.DbColumnName.Equals(input.DbColumnName, StringComparison.OrdinalIgnoreCase)) ?? throw Oops.Oh("字段不存在或已被删除");
+            if (columns.Count <= 1) throw Oops.Oh("不能删除数据表的最后一个字段");
+            if (column.IsPrimarykey) throw Oops.Oh("主键字段不能直接删除，请先调整主键结构");
+            db.DbMaintenance.DropColumn(input.TableName, input.DbColumnName);
+        }
+        finally
+        {
+            DatabaseWriteLock.Release();
+        }
     }
 
     /// <summary>
@@ -169,11 +210,31 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("编辑列")]
     public void UpdateColumn(UpdateDbColumnInput input)
     {
-        var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
-        db.DbMaintenance.RenameColumn(input.TableName, input.OldColumnName, input.ColumnName);
-        if (db.DbMaintenance.IsAnyColumnRemark(input.ColumnName, input.TableName))
-            db.DbMaintenance.DeleteColumnRemark(input.ColumnName, input.TableName);
-        db.DbMaintenance.AddColumnRemark(input.ColumnName, input.TableName, string.IsNullOrWhiteSpace(input.Description) ? input.ColumnName : input.Description);
+        EnsureDatabaseAccess(input.ConfigId);
+        EnsureIdentifier(input.TableName, "表名");
+        EnsureIdentifier(input.OldColumnName, "原字段名");
+        EnsureIdentifier(input.ColumnName, "新字段名");
+        DatabaseWriteLock.Wait();
+        try
+        {
+            var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
+            EnsureTableExists(db, input.TableName);
+            var columns = db.DbMaintenance.GetColumnInfosByTableName(input.TableName, false);
+            if (!columns.Any(u => u.DbColumnName.Equals(input.OldColumnName, StringComparison.OrdinalIgnoreCase)))
+                throw Oops.Oh("原字段不存在或已被修改");
+            if (!input.OldColumnName.Equals(input.ColumnName, StringComparison.OrdinalIgnoreCase) && columns.Any(u => u.DbColumnName.Equals(input.ColumnName, StringComparison.OrdinalIgnoreCase)))
+                throw Oops.Oh($"字段 {input.ColumnName} 已存在");
+            if (!input.OldColumnName.Equals(input.ColumnName, StringComparison.Ordinal))
+                db.DbMaintenance.RenameColumn(input.TableName, input.OldColumnName, input.ColumnName);
+            if (db.DbMaintenance.IsAnyColumnRemark(input.ColumnName, input.TableName))
+                db.DbMaintenance.DeleteColumnRemark(input.ColumnName, input.TableName);
+            if (!string.IsNullOrWhiteSpace(input.Description))
+                db.DbMaintenance.AddColumnRemark(input.ColumnName, input.TableName, input.Description);
+        }
+        finally
+        {
+            DatabaseWriteLock.Release();
+        }
     }
 
     /// <summary>
@@ -184,6 +245,7 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("获取表列表")]
     public List<DbTableInfo> GetTableList(string configId = SqlSugarConst.MainConfigId)
     {
+        EnsureDatabaseAccess(configId);
         var db = _db.AsTenant().GetConnectionScope(configId);
         return db.DbMaintenance.GetTableInfoList(false);
     }
@@ -196,31 +258,46 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("增加表")]
     public void AddTable(DbTableInput input)
     {
+        EnsureDatabaseAccess(input.ConfigId);
+        EnsureIdentifier(input.TableName, "表名");
         if (input.DbColumnInfoList == null || !input.DbColumnInfoList.Any())
             throw Oops.Oh(ErrorCodeEnum.db1000);
 
         if (input.DbColumnInfoList.GroupBy(u => u.DbColumnName).Any(u => u.Count() > 1))
             throw Oops.Oh(ErrorCodeEnum.db1002);
 
-        var config = App.GetOptions<DbConnectionOptions>().ConnectionConfigs.FirstOrDefault(u => u.ConfigId.ToString() == input.ConfigId);
-        var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
-        var typeBuilder = db.DynamicBuilder().CreateClass(input.TableName, new SugarTable() { TableName = input.TableName, TableDescription = input.Description });
-        input.DbColumnInfoList.ForEach(u =>
+        input.DbColumnInfoList.ForEach(ValidateColumn);
+        DatabaseWriteLock.Wait();
+        try
         {
-            var dbColumnName = config!.DbSettings.EnableUnderLine ? UtilMethods.ToUnderLine(u.DbColumnName.Trim()) : u.DbColumnName.Trim();
-            // 虚拟类都默认string类型，具体以列数据类型为准
-            typeBuilder.CreateProperty(dbColumnName, typeof(string), new SugarColumn()
+            var config = App.GetOptions<DbConnectionOptions>().ConnectionConfigs.First(u => u.ConfigId.ToString() == input.ConfigId);
+            var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
+            if (db.DbMaintenance.GetTableInfoList(false).Any(u => u.Name.Equals(input.TableName, StringComparison.OrdinalIgnoreCase)))
+                throw Oops.Oh($"数据表 {input.TableName} 已存在");
+            var validTypes = db.DbMaintenance.GetDbTypes();
+            if (input.DbColumnInfoList.Any(u => !validTypes.Contains(u.DataType, StringComparer.OrdinalIgnoreCase)))
+                throw Oops.Oh("包含当前数据库不支持的字段类型");
+            var typeBuilder = db.DynamicBuilder().CreateClass(input.TableName, new SugarTable() { TableName = input.TableName, TableDescription = input.Description });
+            input.DbColumnInfoList.ForEach(u =>
             {
-                IsPrimaryKey = u.IsPrimarykey == 1,
-                IsIdentity = u.IsIdentity == 1,
-                ColumnDataType = u.DataType,
-                Length = u.Length,
-                IsNullable = u.IsNullable == 1,
-                DecimalDigits = u.DecimalDigits,
-                ColumnDescription = u.ColumnDescription,
+                var dbColumnName = config.DbSettings.EnableUnderLine ? UtilMethods.ToUnderLine(u.DbColumnName.Trim()) : u.DbColumnName.Trim();
+                typeBuilder.CreateProperty(dbColumnName, typeof(string), new SugarColumn()
+                {
+                    IsPrimaryKey = u.IsPrimarykey == 1,
+                    IsIdentity = u.IsIdentity == 1,
+                    ColumnDataType = u.DataType,
+                    Length = u.Length,
+                    IsNullable = u.IsNullable == 1,
+                    DecimalDigits = u.DecimalDigits,
+                    ColumnDescription = u.ColumnDescription,
+                });
             });
-        });
-        db.CodeFirst.InitTables(typeBuilder.BuilderType());
+            db.CodeFirst.InitTables(typeBuilder.BuilderType());
+        }
+        finally
+        {
+            DatabaseWriteLock.Release();
+        }
     }
 
     /// <summary>
@@ -231,8 +308,19 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("删除表")]
     public void DeleteTable(DeleteDbTableInput input)
     {
-        var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
-        db.DbMaintenance.DropTable(input.TableName);
+        EnsureDatabaseAccess(input.ConfigId);
+        EnsureIdentifier(input.TableName, "表名");
+        DatabaseWriteLock.Wait();
+        try
+        {
+            var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
+            EnsureTableExists(db, input.TableName);
+            db.DbMaintenance.DropTable(input.TableName);
+        }
+        finally
+        {
+            DatabaseWriteLock.Release();
+        }
     }
 
     /// <summary>
@@ -243,10 +331,18 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("编辑表")]
     public void UpdateTable(UpdateDbTableInput input)
     {
-        var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
-        db.DbMaintenance.RenameTable(input.OldTableName, input.TableName);
+        EnsureDatabaseAccess(input.ConfigId);
+        EnsureIdentifier(input.OldTableName, "原表名");
+        EnsureIdentifier(input.TableName, "新表名");
+        DatabaseWriteLock.Wait();
         try
         {
+            var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
+            EnsureTableExists(db, input.OldTableName);
+            if (!input.OldTableName.Equals(input.TableName, StringComparison.OrdinalIgnoreCase) && db.DbMaintenance.GetTableInfoList(false).Any(u => u.Name.Equals(input.TableName, StringComparison.OrdinalIgnoreCase)))
+                throw Oops.Oh($"数据表 {input.TableName} 已存在");
+            if (!input.OldTableName.Equals(input.TableName, StringComparison.Ordinal))
+                db.DbMaintenance.RenameTable(input.OldTableName, input.TableName);
             if (db.DbMaintenance.IsAnyTableRemark(input.TableName))
                 db.DbMaintenance.DeleteTableRemark(input.TableName);
 
@@ -256,6 +352,10 @@ public class SysDatabaseService : IDynamicApiController, ITransient
         catch (NotSupportedException ex)
         {
             throw Oops.Oh(ex.ToString());
+        }
+        finally
+        {
+            DatabaseWriteLock.Release();
         }
     }
 
@@ -267,9 +367,13 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("创建实体")]
     public void CreateEntity(CreateEntityInput input)
     {
-        var config = App.GetOptions<DbConnectionOptions>().ConnectionConfigs.FirstOrDefault(u => u.ConfigId.ToString() == input.ConfigId);
+        EnsureDatabaseAccess(input.ConfigId);
+        EnsureIdentifier(input.TableName, "表名");
         input.Position = string.IsNullOrWhiteSpace(input.Position) ? "Admin.NET.Application" : input.Position;
+        EnsureCodeOutputPosition(input.Position);
+        var config = App.GetOptions<DbConnectionOptions>().ConnectionConfigs.First(u => u.ConfigId.ToString() == input.ConfigId);
         input.EntityName = string.IsNullOrWhiteSpace(input.EntityName) ? (config.DbSettings.EnableUnderLine ? CodeGenUtil.CamelColumnName(input.TableName, null) : input.TableName) : input.EntityName;
+        EnsureIdentifier(input.EntityName, "实体名");
         string[] dbColumnNames = Array.Empty<string>();
         // Entity.cs.vm中是允许创建没有基类的实体的，所以这里也要做出相同的判断
         if (!string.IsNullOrWhiteSpace(input.BaseClassName))
@@ -280,6 +384,7 @@ public class SysDatabaseService : IDynamicApiController, ITransient
         }
         var templatePath = GetEntityTemplatePath();
         var targetPath = GetEntityTargetPath(input);
+        if (File.Exists(targetPath)) throw Oops.Oh($"实体文件 {input.EntityName}.cs 已存在，请先人工确认旧文件");
         var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
         DbTableInfo dbTableInfo = db.DbMaintenance.GetTableInfoList(false).FirstOrDefault(u => u.Name == input.TableName || u.Name == input.TableName.ToLower()) ?? throw Oops.Oh(ErrorCodeEnum.db1001);
         List<DbColumnInfo> dbColumnInfos = db.DbMaintenance.GetColumnInfosByTableName(input.TableName, false);
@@ -313,9 +418,17 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("创建种子数据")]
     public async Task CreateSeedData(CreateSeedDataInput input)
     {
-        var config = App.GetOptions<DbConnectionOptions>().ConnectionConfigs.FirstOrDefault(u => u.ConfigId.ToString() == input.ConfigId);
+        EnsureDatabaseAccess(input.ConfigId);
+        EnsureIdentifier(input.TableName, "表名");
         input.Position = string.IsNullOrWhiteSpace(input.Position) ? "Admin.NET.Core" : input.Position;
+        EnsureCodeOutputPosition(input.Position);
+        if (!string.IsNullOrWhiteSpace(input.Suffix) && !Regex.IsMatch(input.Suffix, "^[A-Za-z0-9_]{1,64}$"))
+            throw Oops.Oh("种子后缀只能包含英文字母、数字和下划线");
+        var config = App.GetOptions<DbConnectionOptions>().ConnectionConfigs.First(u => u.ConfigId.ToString() == input.ConfigId);
 
+        await DatabaseWriteLock.WaitAsync();
+        try
+        {
         var templatePath = GetSeedDataTemplatePath();
         var db = _db.AsTenant().GetConnectionScope(input.ConfigId);
         var tableInfo = db.DbMaintenance.GetTableInfoList(false).First(u => u.Name == input.TableName); // 表名
@@ -482,7 +595,13 @@ public class SysDatabaseService : IDynamicApiController, ITransient
         });
 
         var targetPath = GetSeedDataTargetPath(input);
+        if (File.Exists(targetPath)) throw Oops.Oh($"种子文件 {input.SeedDataName}.cs 已存在，请先人工确认旧文件");
         await File.WriteAllTextAsync(targetPath, tResult, Encoding.UTF8);
+        }
+        finally
+        {
+            DatabaseWriteLock.Release();
+        }
     }
 
     /// <summary>
@@ -585,6 +704,7 @@ public class SysDatabaseService : IDynamicApiController, ITransient
     [DisplayName("备份数据库（PostgreSQL）")]
     public async Task<IActionResult> BackupDatabase()
     {
+        EnsureSuperAdmin();
         if (_db.CurrentConnectionConfig.DbType != SqlSugar.DbType.PostgreSQL)
             throw Oops.Oh("只支持 PostgreSQL 数据库 😁");
 
@@ -648,5 +768,45 @@ public class SysDatabaseService : IDynamicApiController, ITransient
         {
             FileDownloadName = backupFileName
         };
+    }
+
+    private void EnsureSuperAdmin()
+    {
+        if (!_userManager.SuperAdmin)
+            throw Oops.Oh("库表管理仅允许超级管理员使用");
+    }
+
+    private void EnsureDatabaseAccess(string configId)
+    {
+        EnsureSuperAdmin();
+        if (string.IsNullOrWhiteSpace(configId) || !App.GetOptions<DbConnectionOptions>().ConnectionConfigs.Any(u => u.ConfigId.ToString() == configId))
+            throw Oops.Oh("数据库标识不存在或不在系统配置白名单中");
+    }
+
+    private static void EnsureIdentifier(string value, string label)
+    {
+        if (string.IsNullOrWhiteSpace(value) || !DatabaseIdentifierRegex.IsMatch(value))
+            throw Oops.Oh($"{label}格式无效，只允许字母、数字、下划线且不能以数字开头");
+    }
+
+    private void ValidateColumn(DbColumnInput input)
+    {
+        EnsureIdentifier(input.DbColumnName, "字段名");
+        if (string.IsNullOrWhiteSpace(input.DataType) || !Regex.IsMatch(input.DataType, "^[A-Za-z0-9_ ]{1,64}$"))
+            throw Oops.Oh("字段类型格式无效");
+        if (input.IsIdentity == 1 && input.IsNullable == 1)
+            throw Oops.Oh($"自增字段 {input.DbColumnName} 不能设置为可空");
+    }
+
+    private static void EnsureTableExists(SqlSugarScopeProvider db, string tableName)
+    {
+        if (!db.DbMaintenance.GetTableInfoList(false).Any(u => u.Name.Equals(tableName, StringComparison.OrdinalIgnoreCase)))
+            throw Oops.Oh($"数据表 {tableName} 不存在或已被修改");
+    }
+
+    private void EnsureCodeOutputPosition(string position)
+    {
+        if (_codeGenOptions.BackendApplicationNamespaces == null || !_codeGenOptions.BackendApplicationNamespaces.Contains(position, StringComparer.Ordinal))
+            throw Oops.Oh("代码存放位置不在后台配置白名单中");
     }
 }

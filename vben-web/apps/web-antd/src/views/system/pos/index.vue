@@ -89,10 +89,20 @@ const userColumns: TableColumnsType<SysPosUser> = [
 
 const formRules: Record<string, Rule[]> = {
   code: [
-    { message: '请输入职位编码', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入职位编码',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   name: [
-    { message: '请输入职位名称', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入职位名称',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
 };
 
@@ -102,7 +112,8 @@ const statusOptions = [
 ];
 
 const isSuperAdmin = computed(
-  () => Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
+  () =>
+    Number((userStore.userInfo as any)?.accountType) === SUPER_ADMIN_ACCOUNT,
 );
 
 const tenantOptions = computed(() =>
@@ -317,7 +328,11 @@ onMounted(async () => {
               </template>
               重置
             </Button>
-            <Button v-if="can('sysPos:add')" type="primary" @click="openCreatePos">
+            <Button
+              v-if="can('sysPos:add')"
+              type="primary"
+              @click="openCreatePos"
+            >
               <template #icon>
                 <IconifyIcon icon="lucide:plus" />
               </template>
@@ -360,7 +375,9 @@ onMounted(async () => {
                   row-key="id"
                   size="small"
                 >
-                  <template #bodyCell="{ column: userColumn, index: userIndex }">
+                  <template
+                    #bodyCell="{ column: userColumn, index: userIndex }"
+                  >
                     <template v-if="userColumn.key === 'index'">
                       {{ userIndex + 1 }}
                     </template>
@@ -477,19 +494,32 @@ onMounted(async () => {
       centered
       class="pos-modal"
       destroy-on-close
-      width="560"
+      :width="560"
       @cancel="formRef?.clearValidate()"
     >
-      <Form ref="formRef" :model="formState" :rules="formRules" layout="vertical">
+      <Form
+        ref="formRef"
+        :model="formState"
+        :rules="formRules"
+        layout="vertical"
+      >
         <Row :gutter="16">
           <Col :span="24">
             <Form.Item label="职位名称" name="name">
-              <Input v-model:value="formState.name" allow-clear placeholder="职位名称" />
+              <Input
+                v-model:value="formState.name"
+                allow-clear
+                placeholder="职位名称"
+              />
             </Form.Item>
           </Col>
           <Col :span="24">
             <Form.Item label="职位编码" name="code">
-              <Input v-model:value="formState.code" allow-clear placeholder="职位编码" />
+              <Input
+                v-model:value="formState.code"
+                allow-clear
+                placeholder="职位编码"
+              />
             </Form.Item>
           </Col>
           <Col :span="12">
@@ -503,7 +533,10 @@ onMounted(async () => {
           </Col>
           <Col :span="12">
             <Form.Item label="状态" name="status">
-              <Radio.Group v-model:value="formState.status" :options="statusOptions" />
+              <Radio.Group
+                v-model:value="formState.status"
+                :options="statusOptions"
+              />
             </Form.Item>
           </Col>
           <Col :span="24">
@@ -540,29 +573,29 @@ onMounted(async () => {
 .panel {
   min-width: 0;
   padding: 12px;
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border) / 72%);
   border-radius: 8px;
-  background: hsl(var(--background));
 }
 
 .panel-head {
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
   margin-bottom: 10px;
 }
 
 .panel-title {
-  color: hsl(var(--foreground));
   font-size: 14px;
   font-weight: 650;
+  color: hsl(var(--foreground));
 }
 
 .panel-subtitle {
   margin-top: 2px;
-  color: hsl(var(--muted-foreground));
   font-size: 12px;
+  color: hsl(var(--muted-foreground));
 }
 
 .query-form {
@@ -580,10 +613,10 @@ onMounted(async () => {
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  margin: 14px -20px -16px;
   padding: 10px 20px;
-  border-top: 1px solid hsl(var(--border) / 72%);
+  margin: 14px -20px -16px;
   background: hsl(var(--background));
+  border-top: 1px solid hsl(var(--border) / 72%);
 }
 
 :global(.pos-modal) {

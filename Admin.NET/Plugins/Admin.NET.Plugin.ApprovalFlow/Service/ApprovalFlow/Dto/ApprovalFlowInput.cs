@@ -30,29 +30,71 @@ public class ApprovalFlowInput : BasePageInput
 /// <summary>
 /// 审批流增加输入参数
 /// </summary>
-public class AddApprovalFlowInput : ApprovalFlow
+public class AddApprovalFlowInput
 {
+    /// <summary>
+    /// 编号，为空时由系统生成
+    /// </summary>
+    [MaxLength(32)]
+    public string? Code { get; set; }
+
     /// <summary>
     /// 名称
     /// </summary>
     [Required(ErrorMessage = "名称不能为空")]
-    public override string Name { get; set; }
+    [MaxLength(32)]
+    public string Name { get; set; }
 
     /// <summary>
     /// 状态
     /// </summary>
     [Required(ErrorMessage = "状态不能为空")]
-    public override int? Status { get; set; }
+    [Range(1, 2, ErrorMessage = "状态值无效")]
+    public int? Status { get; set; }
+
+    /// <summary>
+    /// 备注
+    /// </summary>
+    [MaxLength(256)]
+    public string? Remark { get; set; }
 }
 
 /// <summary>
 /// 审批流更新输入参数
 /// </summary>
-public class UpdateApprovalFlowInput : ApprovalFlow
+public class UpdateApprovalFlowInput : AddApprovalFlowInput
 {
     /// <summary>
     /// 主键Id
     /// </summary>
     [Required(ErrorMessage = "主键Id不能为空")]
-    public override long Id { get; set; }
+    public long Id { get; set; }
+
+    /// <summary>
+    /// 旧版兼容：业务表绑定配置
+    /// </summary>
+    public string? FormJson { get; set; }
+
+    /// <summary>
+    /// 旧版兼容：流程设计配置
+    /// </summary>
+    public string? FlowJson { get; set; }
+}
+
+/// <summary>
+/// 单独保存审批流 JSON 配置
+/// </summary>
+public class UpdateApprovalFlowJsonInput
+{
+    /// <summary>
+    /// 主键Id
+    /// </summary>
+    [Required(ErrorMessage = "主键Id不能为空")]
+    public long Id { get; set; }
+
+    /// <summary>
+    /// JSON 配置
+    /// </summary>
+    [Required(ErrorMessage = "配置不能为空")]
+    public string Json { get; set; }
 }

@@ -2,10 +2,12 @@
 import type {
   FormInstance,
   TableColumnsType,
-  TreeProps,
   UploadProps,
 } from 'ant-design-vue';
+import type { CheckboxChangeEvent } from 'ant-design-vue/es/checkbox/interface';
 import type { Rule } from 'ant-design-vue/es/form';
+
+import type { PropType, VNode } from 'vue';
 
 import type {
   SaveTenantParams,
@@ -15,7 +17,7 @@ import type {
   UserRegWayOption,
 } from '#/api';
 
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue';
 
 import { useAccess } from '@vben/access';
 import { IconifyIcon } from '@vben/icons';
@@ -24,6 +26,7 @@ import { useAccessStore } from '@vben/stores';
 import {
   Avatar,
   Button,
+  Checkbox,
   Col,
   Descriptions,
   Dropdown,
@@ -44,7 +47,6 @@ import {
   Tabs,
   Tag,
   Tooltip,
-  Tree,
   Upload,
 } from 'ant-design-vue';
 
@@ -65,6 +67,7 @@ import {
   updateTenantApi,
 } from '#/api';
 import { persistAdminNetTokens } from '#/utils/adminnet/token';
+import { ADMIN_PAGINATION_PROPS } from '#/utils/pagination';
 
 defineOptions({ name: 'AdminNetSystemTenant' });
 
@@ -75,6 +78,8 @@ const DISABLED = 2;
 const YES = 1;
 const NO = 2;
 const ID_TENANT = 0;
+const MENU_TYPE_DIR = 1;
+const MENU_TYPE_BUTTON = 3;
 const DEFAULT_TENANT_ID = 123_456_780_000_000;
 const TENANT_SWITCH_HOME_PATH = '/dashboard/home';
 
@@ -117,7 +122,12 @@ const columns: TableColumnsType<SysTenantRecord> = [
   { key: 'logo', title: '图标', width: 62 },
   { dataIndex: 'name', key: 'name', title: '名称', width: 170 },
   { dataIndex: 'title', key: 'title', title: '标题', width: 170 },
-  { dataIndex: 'adminAccount', key: 'adminAccount', title: '租管账号', width: 118 },
+  {
+    dataIndex: 'adminAccount',
+    key: 'adminAccount',
+    title: '租管账号',
+    width: 118,
+  },
   { dataIndex: 'phone', key: 'phone', title: '电话', width: 126 },
   { dataIndex: 'host', key: 'host', title: '域名', width: 150 },
   { key: 'tenantType', title: '租户类型', width: 96 },
@@ -132,31 +142,76 @@ const columns: TableColumnsType<SysTenantRecord> = [
 
 const formRules: Record<string, Rule[]> = {
   adminAccount: [
-    { message: '请输入租管账号', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入租管账号',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   copyright: [
-    { message: '请输入版权信息', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入版权信息',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   icp: [
-    { message: '请输入备案号', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入备案号',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   icpUrl: [
-    { message: '请输入 ICP 地址', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入 ICP 地址',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   name: [
-    { message: '请输入租户名称', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入租户名称',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   tenantType: [
-    { message: '请选择租户类型', required: true, trigger: 'change', type: 'number' },
+    {
+      message: '请选择租户类型',
+      required: true,
+      trigger: 'change',
+      type: 'number',
+    },
   ],
   title: [
-    { message: '请输入系统主标题', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入系统主标题',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   viceDesc: [
-    { message: '请输入系统描述', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入系统描述',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
   viceTitle: [
-    { message: '请输入系统副标题', required: true, trigger: 'blur', type: 'string' },
+    {
+      message: '请输入系统副标题',
+      required: true,
+      trigger: 'blur',
+      type: 'string',
+    },
   ],
 };
 
@@ -211,10 +266,6 @@ const regWayOptions = computed(() =>
   })),
 );
 
-const menuTreeData = computed<TreeProps['treeData']>(() =>
-  toMenuTreeData(filteredMenuTree.value),
-);
-
 const isIdTenantForm = computed(() => formState.tenantType === ID_TENANT);
 
 function can(code: string) {
@@ -256,7 +307,10 @@ function getRootMenuKeys(items: SysMenuRecord[] = []): Array<number | string> {
   return items.map((item) => item.id);
 }
 
-function filterMenuTree(items: SysMenuRecord[] = [], keyword = ''): SysMenuRecord[] {
+function filterMenuTree(
+  items: SysMenuRecord[] = [],
+  keyword = '',
+): SysMenuRecord[] {
   const normalizedKeyword = keyword.trim().toLowerCase();
   if (!normalizedKeyword) {
     return items;
@@ -276,17 +330,6 @@ function filterMenuTree(items: SysMenuRecord[] = [], keyword = ''): SysMenuRecor
       return { ...item, children };
     })
     .filter(Boolean) as SysMenuRecord[];
-}
-
-function toMenuTreeData(items: SysMenuRecord[] = []): TreeProps['treeData'] {
-  return items.map((item) => ({
-    children: toMenuTreeData(item.children),
-    key: item.id,
-    path: item.path,
-    permission: item.permission,
-    title: item.title || item.name || item.path || `菜单 ${item.id}`,
-    type: item.type,
-  }));
 }
 
 function resetFormState(values: TenantFormState) {
@@ -406,9 +449,9 @@ async function submitTenant() {
       status: formState.status ?? ENABLED,
     } as SaveTenantParams & { id?: number };
 
-  if (payload.enableReg !== YES) {
-    payload.regWayId = undefined;
-  }
+    if (payload.enableReg !== YES) {
+      payload.regWayId = undefined;
+    }
 
     if (payload.id) {
       await updateTenantApi(payload as SaveTenantParams & { id: number });
@@ -431,7 +474,14 @@ async function changeStatus(record: SysTenantRecord, checked: boolean) {
   await loadTenants();
 }
 
-function applyTenantLogin(result: TenantLoginResult) {
+function getUniqueMenuIds(keys: Array<number | string>) {
+  return [...new Set(keys.map(Number).filter((id) => Number.isFinite(id)))];
+}
+
+function applyTenantLogin(
+  result: TenantLoginResult,
+  options: { messageText: string },
+) {
   if (!result.accessToken) {
     message.warning('后端未返回登录令牌');
     return;
@@ -441,7 +491,7 @@ function applyTenantLogin(result: TenantLoginResult) {
     accessToken: result.accessToken,
     refreshToken: result.refreshToken,
   });
-  message.success('租户上下文已切换，正在进入工作台');
+  message.success(options.messageText);
   window.setTimeout(() => {
     window.location.replace(TENANT_SWITCH_HOME_PATH);
   }, 500);
@@ -478,11 +528,26 @@ async function runTenantAction(
 function confirmGoTenant(record: SysTenantRecord) {
   Modal.confirm({
     centered: true,
-    content: `确定要进入「${record.name}」租管端吗？成功后会切到该租户管理员身份，菜单权限以租管账号为准。`,
+    content: h('div', { class: 'tenant-action-confirm' }, [
+      h('p', `确定要进入「${record.name}」租管端吗？`),
+      h('ul', [
+        h(
+          'li',
+          `会登录为该租户绑定的租管账号：${record.adminAccount || '未配置'}`,
+        ),
+        h(
+          'li',
+          '菜单、按钮和数据权限以租管账号为准，适合代租户管理员排查问题。',
+        ),
+        h('li', '如果只是想用当前账号查看另一个租户，请使用“切换租户”。'),
+      ]),
+    ]),
     okText: '进入',
     onOk: () =>
       runTenantAction('go', record, async () => {
-        applyTenantLogin(await goTenantApi(record.id));
+        applyTenantLogin(await goTenantApi(record.id), {
+          messageText: `已进入「${record.name}」租管端，正在进入工作台`,
+        });
       }),
     title: '进入租管端',
   });
@@ -491,11 +556,23 @@ function confirmGoTenant(record: SysTenantRecord) {
 function confirmChangeTenant(record: SysTenantRecord) {
   Modal.confirm({
     centered: true,
-    content: `确定将当前用户切换到「${record.name}」吗？成功后保留当前用户身份，菜单权限以当前账号在该租户的角色为准。`,
+    content: h('div', { class: 'tenant-action-confirm' }, [
+      h('p', `确定将当前用户切换到「${record.name}」吗？`),
+      h('ul', [
+        h('li', '会保留当前登录用户，只切换当前用户的租户上下文。'),
+        h('li', '菜单、按钮和数据权限以当前账号在目标租户中的角色为准。'),
+        h(
+          'li',
+          '如果当前账号在两个租户权限相近，页面看起来可能只是刷新了一次。',
+        ),
+      ]),
+    ]),
     okText: '切换',
     onOk: () =>
       runTenantAction('change', record, async () => {
-        applyTenantLogin(await changeTenantApi(record.id));
+        applyTenantLogin(await changeTenantApi(record.id), {
+          messageText: `已切换到「${record.name}」租户上下文，正在进入工作台`,
+        });
       }),
     title: '切换租户',
   });
@@ -504,12 +581,23 @@ function confirmChangeTenant(record: SysTenantRecord) {
 function confirmSyncGrantMenu(record: SysTenantRecord) {
   Modal.confirm({
     centered: true,
-    content: `确定同步「${record.name}」的授权数据吗？该操作通常用于版本更新后补齐授权。`,
+    content: h('div', { class: 'tenant-action-confirm' }, [
+      h('p', `确定同步「${record.name}」的授权数据吗？`),
+      h('ul', [
+        h(
+          'li',
+          '该动作会根据当前角色菜单重新生成租户菜单授权，通常只在版本升级后补齐新菜单时使用。',
+        ),
+        h('li', '同步后会清理并重建租户授权关系，不是普通刷新按钮。'),
+        h('li', '前后端和数据库都已加去重保护，避免再次写入重复权限记录。'),
+      ]),
+    ]),
     okText: '同步',
     onOk: () =>
       runTenantAction('syncGrant', record, async () => {
         await syncTenantGrantMenuApi(record.id);
-        message.success('授权数据已同步');
+        message.success(`「${record.name}」授权数据已同步`);
+        await loadTenants();
       }),
     title: '同步授权',
   });
@@ -575,7 +663,7 @@ async function openGrantMenu(record: SysTenantRecord) {
     ]);
     menuTree.value = menus;
     checkedMenuKeys.value = ids;
-    expandedMenuKeys.value = getRootMenuKeys(menus);
+    expandedMenuKeys.value = getAllMenuKeys(menus);
   } finally {
     menuLoading.value = false;
   }
@@ -587,11 +675,13 @@ async function submitGrantMenu() {
   }
   grantSubmitLoading.value = true;
   try {
+    const menuIdList = getUniqueMenuIds(checkedMenuKeys.value);
     await grantTenantMenuApi({
       id: currentGrantTenant.value.id,
-      menuIdList: checkedMenuKeys.value.map(Number),
+      menuIdList,
     });
-    message.success('租户菜单授权已保存');
+    checkedMenuKeys.value = menuIdList;
+    message.success(`「${currentGrantTenant.value.name}」菜单授权已保存`);
     grantModalOpen.value = false;
   } finally {
     grantSubmitLoading.value = false;
@@ -605,6 +695,195 @@ function expandAllMenus() {
 function collapseAllMenus() {
   expandedMenuKeys.value = getRootMenuKeys(filteredMenuTree.value);
 }
+
+function getMenuTitle(item: SysMenuRecord) {
+  return item.title || item.name || item.path || `菜单 ${item.id}`;
+}
+
+function getMenuChildren(item: SysMenuRecord) {
+  return item.children ?? [];
+}
+
+function isActionMenu(item: SysMenuRecord) {
+  return item.type === MENU_TYPE_BUTTON || Boolean(item.permission);
+}
+
+function getActionChildren(item: SysMenuRecord) {
+  return getMenuChildren(item).filter((child) => isActionMenu(child));
+}
+
+function getBranchChildren(item: SysMenuRecord) {
+  return getMenuChildren(item).filter((child) => !isActionMenu(child));
+}
+
+function getMenuIds(item: SysMenuRecord): number[] {
+  return [
+    item.id,
+    ...getMenuChildren(item).flatMap((child) => getMenuIds(child)),
+  ];
+}
+
+function getCheckedMenuCount(item: SysMenuRecord) {
+  return getMenuIds(item).filter((id) => checkedMenuKeys.value.includes(id))
+    .length;
+}
+
+function isIndeterminateMenu(item: SysMenuRecord) {
+  const ids = getMenuIds(item);
+  const checkedCount = getCheckedMenuCount(item);
+  return checkedCount > 0 && checkedCount < ids.length;
+}
+
+function setMenuChecked(item: SysMenuRecord, checked: boolean) {
+  const ids = new Set(getMenuIds(item));
+  const next = new Set(checkedMenuKeys.value);
+
+  for (const id of ids) {
+    if (checked) {
+      next.add(id);
+    } else {
+      next.delete(id);
+    }
+  }
+
+  checkedMenuKeys.value = [...next];
+}
+
+function toggleMenuExpand(id: number) {
+  const next = new Set(expandedMenuKeys.value);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  expandedMenuKeys.value = [...next];
+}
+
+const GrantMenuNode = defineComponent({
+  name: 'GrantMenuNode',
+  props: {
+    checkedKeys: {
+      required: true,
+      type: Array as PropType<Array<number | string>>,
+    },
+    expandedKeys: {
+      required: true,
+      type: Array as PropType<Array<number | string>>,
+    },
+    item: {
+      required: true,
+      type: Object as PropType<SysMenuRecord>,
+    },
+    level: {
+      default: 0,
+      type: Number,
+    },
+  },
+  emits: {
+    check: (_item: SysMenuRecord, _checked: boolean) => true,
+    toggle: (_id: number) => true,
+  },
+  setup(props, { emit }) {
+    const isChecked = (id: number) => props.checkedKeys.includes(id);
+    const isExpanded = (id: number) => props.expandedKeys.includes(id);
+    const readChecked = (event: CheckboxChangeEvent) =>
+      Boolean(event.target?.checked);
+
+    const renderAction = (action: SysMenuRecord): VNode =>
+      h(
+        'span',
+        {
+          class: ['grant-action-pill', isChecked(action.id) && 'is-checked'],
+          title: action.permission || getMenuTitle(action),
+        },
+        [
+          h(Checkbox, {
+            checked: isChecked(action.id),
+            onChange: (event: CheckboxChangeEvent) =>
+              emit('check', action, readChecked(event)),
+          }),
+          h('span', { class: 'grant-action-title' }, getMenuTitle(action)),
+        ],
+      );
+
+    const renderNode = (item: SysMenuRecord, level: number): VNode => {
+      const branchChildren = getBranchChildren(item);
+      const actionChildren = getActionChildren(item);
+      const expanded = isExpanded(item.id);
+      const hasBranches = branchChildren.length > 0;
+      const hasChildren = hasBranches || actionChildren.length > 0;
+
+      return h(
+        'div',
+        {
+          class: [
+            'grant-node',
+            item.type === MENU_TYPE_DIR && 'is-dir',
+            expanded && 'is-expanded',
+          ],
+          style: { '--grant-level': String(level) },
+        },
+        [
+          h('div', { class: 'grant-node-row' }, [
+            h(
+              'button',
+              {
+                class: ['grant-node-switch', !hasChildren && 'is-placeholder'],
+                disabled: !hasChildren,
+                type: 'button',
+                onClick: () => hasChildren && emit('toggle', item.id),
+              },
+              [
+                h(IconifyIcon, {
+                  icon: expanded
+                    ? 'lucide:chevron-down'
+                    : 'lucide:chevron-right',
+                }),
+              ],
+            ),
+            h(Checkbox, {
+              checked: isChecked(item.id),
+              indeterminate: isIndeterminateMenu(item),
+              onChange: (event: CheckboxChangeEvent) =>
+                emit('check', item, readChecked(event)),
+            }),
+            h(IconifyIcon, {
+              class: 'grant-node-icon',
+              icon:
+                item.type === MENU_TYPE_DIR
+                  ? 'lucide:folder-tree'
+                  : 'lucide:file-cog',
+            }),
+            h('span', { class: 'grant-node-title' }, getMenuTitle(item)),
+            item.path
+              ? h(
+                  Tag,
+                  { class: 'grant-path-tag', color: 'orange' },
+                  () => item.path,
+                )
+              : null,
+          ]),
+          expanded && actionChildren.length > 0
+            ? h(
+                'div',
+                { class: 'grant-action-row' },
+                actionChildren.map((action) => renderAction(action)),
+              )
+            : null,
+          expanded && branchChildren.length > 0
+            ? h(
+                'div',
+                { class: 'grant-node-children' },
+                branchChildren.map((child) => renderNode(child, level + 1)),
+              )
+            : null,
+        ],
+      );
+    };
+
+    return () => renderNode(props.item, props.level);
+  },
+});
 
 async function refreshGrantMenus() {
   if (currentGrantTenant.value) {
@@ -634,7 +913,9 @@ onMounted(loadTenants);
       <div class="panel-head">
         <div>
           <div class="panel-title">租户</div>
-          <div class="panel-subtitle">管理租户信息、站点配置、菜单授权和租户上下文</div>
+          <div class="panel-subtitle">
+            管理租户信息、站点配置、菜单授权和租户上下文
+          </div>
         </div>
       </div>
 
@@ -702,11 +983,7 @@ onMounted(loadTenants);
             {{ (pagination.page - 1) * pagination.pageSize + index + 1 }}
           </template>
           <template v-else-if="column.key === 'logo'">
-            <Avatar
-              shape="square"
-              :size="28"
-              :src="asTenant(record).logo"
-            >
+            <Avatar shape="square" :size="28" :src="asTenant(record).logo">
               {{ asTenant(record).name?.slice(0, 1) }}
             </Avatar>
           </template>
@@ -741,7 +1018,9 @@ onMounted(loadTenants);
                     {{ getValueText(asTenant(record).viceTitle) }}
                   </Descriptions.Item>
                   <Descriptions.Item label="启用注册">
-                    <Tag :color="getYesNoMeta(asTenant(record).enableReg).color">
+                    <Tag
+                      :color="getYesNoMeta(asTenant(record).enableReg).color"
+                    >
                       {{ getYesNoMeta(asTenant(record).enableReg).label }}
                     </Tag>
                   </Descriptions.Item>
@@ -780,7 +1059,9 @@ onMounted(loadTenants);
                 !can('sysTenant:setStatus')
               "
               size="small"
-              @change="(checked) => changeStatus(asTenant(record), Boolean(checked))"
+              @change="
+                (checked) => changeStatus(asTenant(record), Boolean(checked))
+              "
             />
           </template>
           <template v-else-if="column.key === 'modifyRecord'">
@@ -798,13 +1079,17 @@ onMounted(loadTenants);
                   size="small"
                 >
                   <Descriptions.Item label="创建者">
-                    <Tag>{{ getValueText(asTenant(record).createUserName) }}</Tag>
+                    <Tag>
+                      {{ getValueText(asTenant(record).createUserName) }}
+                    </Tag>
                   </Descriptions.Item>
                   <Descriptions.Item label="创建时间">
                     <Tag>{{ getValueText(asTenant(record).createTime) }}</Tag>
                   </Descriptions.Item>
                   <Descriptions.Item label="修改者">
-                    <Tag>{{ getValueText(asTenant(record).updateUserName) }}</Tag>
+                    <Tag>
+                      {{ getValueText(asTenant(record).updateUserName) }}
+                    </Tag>
                   </Descriptions.Item>
                   <Descriptions.Item label="修改时间">
                     <Tag>{{ getValueText(asTenant(record).updateTime) }}</Tag>
@@ -854,7 +1139,10 @@ onMounted(loadTenants);
                   编辑
                 </Button>
               </Tooltip>
-              <Dropdown :disabled="isTenantBusy(asTenant(record))" trigger="click">
+              <Dropdown
+                :disabled="isTenantBusy(asTenant(record))"
+                trigger="click"
+              >
                 <Button
                   :loading="isTenantBusy(asTenant(record))"
                   size="small"
@@ -877,7 +1165,10 @@ onMounted(loadTenants);
                       </template>
                       进入租管端
                     </Menu.Item>
-                    <Menu.Item v-if="can('sysTenant:changeTenant')" key="change">
+                    <Menu.Item
+                      v-if="can('sysTenant:changeTenant')"
+                      key="change"
+                    >
                       <template #icon>
                         <IconifyIcon icon="lucide:repeat-2" />
                       </template>
@@ -920,12 +1211,11 @@ onMounted(loadTenants);
 
       <div class="table-footer">
         <Pagination
+          v-bind="ADMIN_PAGINATION_PROPS"
           v-model:current="pagination.page"
           v-model:page-size="pagination.pageSize"
-          :page-size-options="['10', '20', '50', '100']"
           :show-total="(total) => `共 ${total} 条`"
           :total="pagination.total"
-          show-size-changer
           size="small"
           @change="handlePageChange"
         />
@@ -941,10 +1231,15 @@ onMounted(loadTenants);
       centered
       class="tenant-modal"
       destroy-on-close
-      width="760"
+      :width="760"
       @cancel="formRef?.clearValidate()"
     >
-      <Form ref="formRef" :model="formState" :rules="formRules" layout="vertical">
+      <Form
+        ref="formRef"
+        :model="formState"
+        :rules="formRules"
+        layout="vertical"
+      >
         <Tabs v-model:active-key="activeFormTab">
           <Tabs.TabPane key="basic" tab="基本信息">
             <Row :gutter="16">
@@ -1058,7 +1353,11 @@ onMounted(loadTenants);
               </Col>
               <Col :span="12">
                 <Form.Item label="标题" name="title">
-                  <Input v-model:value="formState.title" allow-clear :maxlength="32" />
+                  <Input
+                    v-model:value="formState.title"
+                    allow-clear
+                    :maxlength="32"
+                  />
                 </Form.Item>
               </Col>
               <Col :span="12">
@@ -1118,7 +1417,11 @@ onMounted(loadTenants);
               </Col>
               <Col :span="12">
                 <Form.Item label="备案号" name="icp">
-                  <Input v-model:value="formState.icp" allow-clear :maxlength="32" />
+                  <Input
+                    v-model:value="formState.icp"
+                    allow-clear
+                    :maxlength="32"
+                  />
                 </Form.Item>
               </Col>
               <Col :span="12">
@@ -1154,8 +1457,12 @@ onMounted(loadTenants);
       centered
       class="grant-modal"
       destroy-on-close
-      width="760"
+      :width="920"
     >
+      <div class="grant-note">
+        授权菜单会真实写入租户权限表，提交前会自动去重；同步授权请仅在升级后补齐菜单时使用。
+      </div>
+
       <div class="grant-toolbar">
         <Input
           v-model:value="menuFilterText"
@@ -1169,37 +1476,37 @@ onMounted(loadTenants);
         <Space>
           <Button size="small" @click="expandAllMenus">全部展开</Button>
           <Button size="small" @click="collapseAllMenus">全部折叠</Button>
-          <Button size="small" :loading="menuLoading" @click="refreshGrantMenus">
+          <Button
+            size="small"
+            :loading="menuLoading"
+            @click="refreshGrantMenus"
+          >
             刷新
           </Button>
         </Space>
       </div>
 
       <div class="menu-tree-shell" :class="{ 'is-loading': menuLoading }">
-        <Tree
-          v-model:checked-keys="checkedMenuKeys"
-          v-model:expanded-keys="expandedMenuKeys"
-          class="grant-menu-tree"
-          checkable
-          :selectable="false"
-          :tree-data="menuTreeData"
-        >
-          <template #title="{ title, path, permission, type }">
-            <span
-              class="menu-tree-node"
-              :class="{ 'is-button': permission, 'is-dir': type === 1 }"
-              :title="permission || path || title"
-            >
-              <span>{{ title }}</span>
-              <Tag v-if="path" color="orange">{{ path }}</Tag>
-            </span>
-          </template>
-        </Tree>
+        <div v-if="filteredMenuTree.length > 0" class="grant-menu-grid">
+          <GrantMenuNode
+            v-for="rootMenu in filteredMenuTree"
+            :key="rootMenu.id"
+            :checked-keys="checkedMenuKeys"
+            :expanded-keys="expandedMenuKeys"
+            :item="rootMenu"
+            :level="0"
+            @check="setMenuChecked"
+            @toggle="toggleMenuExpand"
+          />
+        </div>
+        <div v-else class="grant-empty">暂无匹配菜单</div>
       </div>
 
       <div class="modal-footer">
         <Space>
-          <Tag color="blue">已选 {{ checkedMenuKeys.length }}</Tag>
+          <Tag class="grant-selected-count" color="blue">
+            已选 {{ checkedMenuKeys.length }} 项
+          </Tag>
           <Button @click="grantModalOpen = false">取消</Button>
           <Button
             :loading="grantSubmitLoading"
@@ -1224,29 +1531,29 @@ onMounted(loadTenants);
 .panel {
   min-width: 0;
   padding: 12px;
+  background: hsl(var(--background));
   border: 1px solid hsl(var(--border) / 72%);
   border-radius: 8px;
-  background: hsl(var(--background));
 }
 
 .panel-head {
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
   margin-bottom: 10px;
 }
 
 .panel-title {
-  color: hsl(var(--foreground));
   font-size: 14px;
   font-weight: 650;
+  color: hsl(var(--foreground));
 }
 
 .panel-subtitle {
   margin-top: 2px;
-  color: hsl(var(--muted-foreground));
   font-size: 12px;
+  color: hsl(var(--muted-foreground));
 }
 
 .query-form {
@@ -1268,21 +1575,31 @@ onMounted(loadTenants);
 }
 
 .mono-break {
-  word-break: break-all;
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
+  word-break: break-all;
 }
 
 .logo-upload {
   display: grid;
+  place-items: center;
   width: 70px;
   height: 70px;
-  place-items: center;
-  border: 1px dashed hsl(var(--border));
-  border-radius: 8px;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 8px;
+}
+
+.grant-note {
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--primary) / 6%);
+  border: 1px solid hsl(var(--primary) / 18%);
+  border-radius: 7px;
 }
 
 .grant-toolbar {
@@ -1294,91 +1611,156 @@ onMounted(loadTenants);
 
 .menu-tree-shell {
   height: 440px;
-  overflow: auto;
   padding: 8px;
-  border: 1px solid hsl(var(--border) / 75%);
-  border-radius: 8px;
+  overflow: auto;
   background:
     linear-gradient(180deg, hsl(var(--muted) / 30%), transparent 58px),
     hsl(var(--background));
+  border: 1px solid hsl(var(--border) / 75%);
+  border-radius: 8px;
 }
 
 .menu-tree-shell.is-loading {
-  opacity: 0.62;
   pointer-events: none;
+  opacity: 0.62;
 }
 
-.grant-menu-tree {
-  min-width: 680px;
+:global(.grant-modal .grant-menu-grid) {
+  min-width: 820px;
+  padding: 2px 0 6px;
 }
 
-.grant-menu-tree :global(.ant-tree-list-holder-inner) {
-  display: block;
+:global(.grant-modal .grant-node) {
+  --grant-indent: calc(var(--grant-level) * 24px);
+
+  position: relative;
 }
 
-.grant-menu-tree :global(.ant-tree-treenode) {
-  display: inline-flex;
-  width: auto;
-  max-width: 100%;
-  align-items: center;
-  margin-right: 14px;
-  margin-bottom: 8px;
-  padding: 0;
-  vertical-align: top;
-}
-
-.grant-menu-tree :global(.ant-tree-switcher),
-.grant-menu-tree :global(.ant-tree-checkbox),
-.grant-menu-tree :global(.ant-tree-node-content-wrapper) {
-  align-self: center;
-}
-
-.grant-menu-tree :global(.ant-tree-node-content-wrapper) {
-  min-height: 24px;
-  padding-inline: 2px 4px;
-  line-height: 24px;
-}
-
-.grant-menu-tree :global(.ant-tree-indent-unit) {
-  width: 14px;
-}
-
-.menu-tree-node {
-  display: inline-flex;
-  max-width: 100%;
-  align-items: center;
+:global(.grant-modal .grant-node-row) {
+  display: flex;
   gap: 6px;
+  align-items: center;
+  min-height: 30px;
+  padding-left: var(--grant-indent);
   white-space: nowrap;
+  border-radius: 6px;
 }
 
-.menu-tree-node.is-dir {
+:global(.grant-modal .grant-node-row:hover) {
+  background: hsl(var(--muted) / 45%);
+}
+
+:global(.grant-modal .grant-node-switch) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+}
+
+:global(.grant-modal .grant-node-switch:hover) {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 10%);
+}
+
+:global(.grant-modal .grant-node-switch.is-placeholder) {
+  cursor: default;
+  opacity: 0;
+}
+
+:global(.grant-modal .grant-node-icon) {
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 15px;
+  color: hsl(var(--muted-foreground));
+}
+
+:global(.grant-modal .grant-node.is-dir > .grant-node-row .grant-node-title) {
   font-weight: 650;
 }
 
-.menu-tree-node.is-button {
-  min-height: 22px;
-  padding: 0 6px;
-  border-radius: 6px;
-  background: hsl(var(--muted) / 52%);
+:global(.grant-modal .grant-node-title) {
+  font-size: 14px;
   color: hsl(var(--foreground));
-  font-size: 12px;
 }
 
-.grant-menu-tree
-  :global(.ant-tree-checkbox-checked)
-  + :global(.ant-tree-node-content-wrapper)
-  .menu-tree-node.is-button {
-  background: hsl(var(--primary) / 10%);
+:global(.grant-modal .grant-path-tag) {
+  margin-inline-start: 2px;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
+}
+
+:global(.grant-modal .grant-action-row) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 18px;
+  padding: 2px 0 8px calc(var(--grant-indent) + 58px);
+}
+
+:global(.grant-modal .grant-action-pill) {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  height: 24px;
+  padding: 0 7px 0 4px;
+  color: hsl(var(--foreground));
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+:global(.grant-modal .grant-action-pill .ant-checkbox-wrapper) {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+:global(.grant-modal .grant-action-pill:hover) {
+  background: hsl(var(--primary) / 7%);
+  border-color: hsl(var(--primary) / 22%);
+}
+
+:global(.grant-modal .grant-action-pill.is-checked) {
   color: hsl(var(--primary));
+}
+
+:global(.grant-modal .grant-action-title) {
+  font-size: 13px;
+  line-height: 1;
+}
+
+:global(.grant-modal .grant-node-children) {
+  position: relative;
+}
+
+:global(.grant-modal .grant-empty) {
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+  color: hsl(var(--muted-foreground));
+}
+
+:global(.grant-modal .grant-selected-count) {
+  margin-inline-end: 4px;
+  background: hsl(var(--primary) / 7%);
+  border-color: hsl(var(--primary) / 22%);
 }
 
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  margin: 14px -20px -14px;
   padding: 10px 20px;
-  border-top: 1px solid hsl(var(--border) / 72%);
+  margin: 14px -20px -14px;
   background: hsl(var(--background));
+  border-top: 1px solid hsl(var(--border) / 72%);
 }
 
 :global(.tenant-modal) {
@@ -1386,12 +1768,33 @@ onMounted(loadTenants);
 }
 
 :global(.grant-modal) {
-  width: min(760px, calc(100vw - 32px)) !important;
+  width: min(920px, calc(100vw - 32px)) !important;
 }
 
 :global(.tenant-modal .ant-modal-content),
 :global(.grant-modal .ant-modal-content) {
   border-radius: 8px;
+}
+
+:global(.tenant-action-confirm) {
+  font-size: 13px;
+  line-height: 1.7;
+  color: hsl(var(--foreground));
+}
+
+:global(.tenant-action-confirm p) {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+:global(.tenant-action-confirm ul) {
+  padding-left: 18px;
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+}
+
+:global(.tenant-action-confirm li + li) {
+  margin-top: 3px;
 }
 
 :global(.tenant-record-popover .ant-popover-inner) {
@@ -1429,8 +1832,8 @@ onMounted(loadTenants);
 }
 
 :deep(.ant-tree .ant-tree-node-content-wrapper) {
-  min-width: 0;
   flex: 1;
+  min-width: 0;
   height: 32px;
   padding-inline: 5px 8px;
   border-radius: 8px;

@@ -22,18 +22,21 @@ public class OnlineUserHub : Hub<IOnlineUserHub>
     private readonly IHubContext<OnlineUserHub, IOnlineUserHub> _onlineUserHubContext;
     private readonly SysCacheService _sysCacheService;
     private readonly SysConfigService _sysConfigService;
+    private readonly SysOnlineUserService _sysOnlineUserService;
 
     public OnlineUserHub(SqlSugarRepository<SysOnlineUser> sysOnlineUerRep,
         SysMessageService sysMessageService,
         IHubContext<OnlineUserHub, IOnlineUserHub> onlineUserHubContext,
         SysCacheService sysCacheService,
-        SysConfigService sysConfigService)
+        SysConfigService sysConfigService,
+        SysOnlineUserService sysOnlineUserService)
     {
         _sysOnlineUerRep = sysOnlineUerRep;
         _sysMessageService = sysMessageService;
         _onlineUserHubContext = onlineUserHubContext;
         _sysCacheService = sysCacheService;
         _sysConfigService = sysConfigService;
+        _sysOnlineUserService = sysOnlineUserService;
     }
 
     /// <summary>
@@ -134,7 +137,7 @@ public class OnlineUserHub : Hub<IOnlineUserHub>
     /// <returns></returns>
     public async Task ForceOffline(OnlineUserHubInput input)
     {
-        await _onlineUserHubContext.Clients.Client(input.ConnectionId).ForceOffline("强制下线");
+        await _sysOnlineUserService.ForceOfflineByConnection(input.ConnectionId, Context.ConnectionId);
     }
 
     /// <summary>

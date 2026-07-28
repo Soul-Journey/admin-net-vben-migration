@@ -45,3 +45,8 @@ node_modules/
 # Local development/runtime artifacts
 .run-logs/
 /vben-web/.runtime/
+/.codex-build/
+/.codex-obj/
+/.codex/
+/.logs/
+/.backups/

@@ -16,12 +16,14 @@ public class StressTestInput
     /// </summary>
     /// <example>https://gitee.com/zuohuaijun/Admin.NET</example>
     [Required(ErrorMessage = "接口请求地址不能为空")]
+    [MaxLength(512, ErrorMessage = "接口请求地址不能超过512个字符")]
     public string RequestUri { get; set; }
 
     /// <summary>
     /// 请求方式
     /// </summary>
     [Required(ErrorMessage = "请求方式不能为空")]
+    [RegularExpression("^(GET|POST)$", ErrorMessage = "仅支持GET或POST只读接口")]
     public string RequestMethod { get; set; } = nameof(HttpMethod.Get);
 
     /// <summary>
@@ -29,7 +31,7 @@ public class StressTestInput
     /// </summary>
     /// <example>100</example>
     [Required(ErrorMessage = "每轮请求量不能为空")]
-    [Range(1, 100000, ErrorMessage = "每轮请求量必须为1-100000")]
+    [Range(1, 500, ErrorMessage = "每轮请求量必须为1-500")]
     public int? NumberOfRequests { get; set; }
 
     /// <summary>
@@ -37,14 +39,14 @@ public class StressTestInput
     /// </summary>
     /// <example>5</example>
     [Required(ErrorMessage = "压测轮数不能为空")]
-    [Range(1, 10000, ErrorMessage = "压测轮数必须为1-10000")]
+    [Range(1, 10, ErrorMessage = "压测轮数必须为1-10")]
     public int? NumberOfRounds { get; set; }
 
     /// <summary>
     /// 最大并行量（默认为当前主机逻辑处理器的数量）
     /// </summary>
     /// <example>500</example>
-    [Range(0, 10000, ErrorMessage = "最大并行量必须为0-10000")]
+    [Range(1, 50, ErrorMessage = "最大并行量必须为1-50")]
     public int? MaxDegreeOfParallelism { get; set; } = Environment.ProcessorCount;
 
     /// <summary>
@@ -67,4 +69,3 @@ public class StressTestInput
     /// </summary>
     public Dictionary<string, string> QueryParameters { get; set; } = new();
 }
-

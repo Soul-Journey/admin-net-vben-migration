@@ -5,7 +5,7 @@
 // 不得利用本项目从事危害国家安全、扰乱社会秩序、侵犯他人合法权益等法律法规禁止的活动！任何基于本项目二次开发而产生的一切法律纠纷和责任，我们不承担任何责任！
 
 using Furion.Logging.Extensions;
-using Newtonsoft.Json;
+using System.Collections.Concurrent;
 
 namespace Admin.NET.Core.Service;
 
@@ -20,18 +20,22 @@ public class SysWechatPayService : IDynamicApiController, ITransient
 
     private readonly WechatPayOptions _wechatPayOptions;
     private readonly PayCallBackOptions _payCallBackOptions;
+    private readonly UserManager _userManager;
 
     private readonly WechatTenpayClient _wechatTenpayClient;
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> RefundLocks = new();
 
     public SysWechatPayService(SqlSugarRepository<SysWechatPay> sysWechatPayUserRep,
         SqlSugarRepository<SysWechatRefund> sysWechatRefundRep,
         IOptions<WechatPayOptions> wechatPayOptions,
-        IOptions<PayCallBackOptions> payCallBackOptions)
+        IOptions<PayCallBackOptions> payCallBackOptions,
+        UserManager userManager)
     {
         _sysWechatPayRep = sysWechatPayUserRep;
         _sysWechatRefundRep = sysWechatRefundRep;
         _wechatPayOptions = wechatPayOptions.Value;
         _payCallBackOptions = payCallBackOptions.Value;
+        _userManager = userManager;
 
         _wechatTenpayClient = CreateTenpayClient();
     }
@@ -64,6 +68,7 @@ public class SysWechatPayService : IDynamicApiController, ITransient
     [ApiDescriptionSettings(Name = "Page")]
     public async Task<SqlSugarPagedList<SysWechatPay>> Page(WechatPayPageInput input)
     {
+        EnsurePaymentAdmin();
         var query = _sysWechatPayRep.AsQueryable()
             .WhereIF(!string.IsNullOrWhiteSpace(input.Keyword), u => u.OutTradeNumber == input.Keyword || u.TransactionId == input.Keyword)
             .WhereIF(input.CreateTimeRange != null && input.CreateTimeRange.Count > 0 && input.CreateTimeRange[0].HasValue, x => x.CreateTime >= input.CreateTimeRange[0])
@@ -80,6 +85,8 @@ public class SysWechatPayService : IDynamicApiController, ITransient
     [DisplayName("根据支付id获取退款信息列表")]
     public async Task<List<SysWechatRefund>> ListRefund([FromBody] string id)
     {
+        EnsurePaymentAdmin();
+        if (string.IsNullOrWhiteSpace(id)) throw Oops.Oh("支付订单号不能为空");
         var query = _sysWechatRefundRep.AsQueryable()
             .Where(u => u.TransactionId == id);
         return await query.ToListAsync();
@@ -159,6 +166,9 @@ public class SysWechatPayService : IDynamicApiController, ITransient
     [DisplayName("微信支付下单(商户直连)Native")]
     public async Task<dynamic> CreatePayTransactionNative([FromBody] WechatPayTransactionInput input)
     {
+        EnsurePaymentAdmin();
+        EnsurePaymentConfigured(requireRefundCallback: false);
+        ValidateTransactionInput(input);
         var request = new CreatePayTransactionNativeRequest()
         {
             OutTradeNumber = DateTimeOffset.Now.ToString("yyyyMMddHHmmssfff") + (new Random()).Next(100, 1000), // 订单号
@@ -175,7 +185,6 @@ public class SysWechatPayService : IDynamicApiController, ITransient
         var response = await _wechatTenpayClient.ExecuteCreatePayTransactionNativeAsync(request);
         if (!response.IsSuccessful())
         {
-            JsonConvert.SerializeObject(response).LogInformation();
             throw Oops.Oh(response.ErrorMessage);
         }
         // 保存订单信息
@@ -260,7 +269,10 @@ public class SysWechatPayService : IDynamicApiController, ITransient
     [DisplayName("获取支付订单详情(本地库)")]
     public async Task<SysWechatPay> GetPayInfo(string tradeId)
     {
-        return await _sysWechatPayRep.GetFirstAsync(u => u.OutTradeNumber == tradeId);
+        EnsurePaymentAdmin();
+        if (string.IsNullOrWhiteSpace(tradeId)) throw Oops.Oh("商户订单号不能为空");
+        return await _sysWechatPayRep.GetFirstAsync(u => u.OutTradeNumber == tradeId)
+            ?? throw Oops.Oh("支付订单不存在");
     }
 
     /// <summary>
@@ -271,6 +283,14 @@ public class SysWechatPayService : IDynamicApiController, ITransient
     [DisplayName("获取支付订单详情(微信接口)")]
     public async Task<SysWechatPay> GetPayInfoFromWechat(string tradeId)
     {
+        EnsurePaymentAdmin();
+        EnsurePaymentConfigured(requireRefundCallback: false);
+        return await SyncPayInfoFromWechat(tradeId);
+    }
+
+    private async Task<SysWechatPay> SyncPayInfoFromWechat(string tradeId)
+    {
+        if (string.IsNullOrWhiteSpace(tradeId)) throw Oops.Oh("商户订单号不能为空");
         var request = new GetPayTransactionByOutTradeNumberRequest();
         request.OutTradeNumber = tradeId;
         var response = await _wechatTenpayClient.ExecuteGetPayTransactionByOutTradeNumberAsync(request);
@@ -320,47 +340,69 @@ public class SysWechatPayService : IDynamicApiController, ITransient
     [HttpPost]
     public async Task<dynamic> CreateRefundDomestic([FromBody] WechatPayRefundDomesticInput input)
     {
-        // refund/domestic/refunds
-        var request = new CreateRefundDomesticRefundRequest()
-        {
-            Amount = new CreateRefundDomesticRefundRequest.Types.Amount()
-            {
-                Refund = input.Refund,
-                Total = input.Total,
-                Currency = "CNY"
-            },
+        EnsurePaymentAdmin();
+        EnsurePaymentConfigured(requireRefundCallback: true);
 
-            OutTradeNumber = input.TradeId,
-            OutRefundNumber = "R" + DateTimeOffset.Now.ToString("yyyyMMddHHmmssfff") + (new Random()).Next(100, 1000), // 订单号
-            NotifyUrl = _payCallBackOptions.WechatRefundUrl, // 应采用WechatRefundUrl参数，如与WechatPayUrl入口相同，也应分开设置参数
-            Reason = input.Reason,
-        };
-        var response = await _wechatTenpayClient.ExecuteCreateRefundDomesticRefundAsync(request);
-        if (string.IsNullOrEmpty(response.ErrorCode))
+        var refundLock = RefundLocks.GetOrAdd(input.TradeId, _ => new SemaphoreSlim(1, 1));
+        await refundLock.WaitAsync();
+        try
         {
-            // 成功了，这里应该保存退款订单信息
-            var wechatPay = await _sysWechatPayRep.GetFirstAsync(u => u.OutTradeNumber == response.OutTradeNumber);
-            // 保存订单信息
-            if (wechatPay != null)
+            var wechatPay = await _sysWechatPayRep.GetFirstAsync(u => u.OutTradeNumber == input.TradeId)
+                ?? throw Oops.Oh("支付订单不存在");
+            if (!string.Equals(wechatPay.MerchantId, _wechatPayOptions.MerchantId, StringComparison.Ordinal))
+                throw Oops.Oh("订单所属商户与当前微信支付配置不一致");
+            if (!string.Equals(wechatPay.TradeState, "SUCCESS", StringComparison.OrdinalIgnoreCase))
+                throw Oops.Oh("只有支付成功的订单才能申请退款");
+            if (input.Refund <= 0) throw Oops.Oh("退款金额必须大于 0");
+            if (string.IsNullOrWhiteSpace(input.Reason)) throw Oops.Oh("退款原因不能为空");
+
+            var refundedAmount = await _sysWechatRefundRep.AsQueryable()
+                .Where(u => u.WechatPayId == wechatPay.Id)
+                .Where(u => u.TradeState != "CLOSED" && u.TradeState != "ABNORMAL")
+                .SumAsync(u => u.Refund);
+            var remainingAmount = wechatPay.Total - refundedAmount;
+            if (remainingAmount <= 0) throw Oops.Oh("该订单已无可退金额");
+            if (input.Refund > remainingAmount)
+                throw Oops.Oh($"退款金额不能超过剩余可退金额 {remainingAmount / 100m:F2} 元");
+
+            // refund/domestic/refunds
+            var request = new CreateRefundDomesticRefundRequest()
             {
-                var wechatRefund = new SysWechatRefund()
+                Amount = new CreateRefundDomesticRefundRequest.Types.Amount()
                 {
-                    WechatPayId = wechatPay.Id,
-                    TransactionId = response.TransactionId,
                     Refund = input.Refund,
-                    Reason = input.Reason,
-                    OutRefundNumber = request.OutRefundNumber,
-                    Channel = response.Channel,
-                    UserReceivedAccount = response.UserReceivedAccount,
-                };
-                await _sysWechatRefundRep.InsertAsync(wechatRefund);
-            }
+                    Total = wechatPay.Total,
+                    Currency = "CNY"
+                },
+
+                OutTradeNumber = wechatPay.OutTradeNumber,
+                OutRefundNumber = "R" + DateTimeOffset.Now.ToString("yyyyMMddHHmmssfff") + Random.Shared.Next(100, 1000),
+                NotifyUrl = _payCallBackOptions.WechatRefundUrl,
+                Reason = input.Reason.Trim(),
+            };
+            var response = await _wechatTenpayClient.ExecuteCreateRefundDomesticRefundAsync(request);
+            if (!string.IsNullOrEmpty(response.ErrorCode))
+                throw Oops.Bah($"[{response.ErrorCode}]{response.ErrorMessage}");
+
+            var wechatRefund = new SysWechatRefund()
+            {
+                WechatPayId = wechatPay.Id,
+                TransactionId = response.TransactionId,
+                Refund = input.Refund,
+                Reason = input.Reason.Trim(),
+                OutRefundNumber = request.OutRefundNumber,
+                Channel = response.Channel,
+                UserReceivedAccount = response.UserReceivedAccount,
+                TradeState = response.Status,
+            };
+            await _sysWechatRefundRep.InsertAsync(wechatRefund);
+            return response;
         }
-        else
+        finally
         {
-            throw Oops.Bah($"[{response.ErrorCode}]{response.ErrorMessage}");
+            refundLock.Release();
+            RefundLocks.TryRemove(input.TradeId, out _);
         }
-        return response;
     }
 
     /// <summary>
@@ -371,6 +413,9 @@ public class SysWechatPayService : IDynamicApiController, ITransient
     [DisplayName("获取退款订单详情(微信接口)")]
     public async Task<SysWechatRefund> GetRefundInfoFromWechat(string refundId)
     {
+        EnsurePaymentAdmin();
+        EnsurePaymentConfigured(requireRefundCallback: true);
+        if (string.IsNullOrWhiteSpace(refundId)) throw Oops.Oh("商户退款号不能为空");
         var request = new GetRefundDomesticRefundByOutRefundNumberRequest();
         request.OutRefundNumber = refundId;
         var response = await _wechatTenpayClient.ExecuteGetRefundDomesticRefundByOutRefundNumberAsync(request);
@@ -386,7 +431,7 @@ public class SysWechatPayService : IDynamicApiController, ITransient
             // 有退款，刷新一下订单状态
             var wechatPay = await _sysWechatPayRep.GetFirstAsync(u => u.Id == wechatRefund.WechatPayId);
             if (wechatPay != null)
-                await GetPayInfoFromWechat(wechatPay.OutTradeNumber);
+                await SyncPayInfoFromWechat(wechatPay.OutTradeNumber);
         }
         wechatRefund = new SysWechatRefund()
         {
@@ -465,7 +510,7 @@ public class SysWechatPayService : IDynamicApiController, ITransient
 
                 await _sysWechatRefundRep.AsUpdateable(wechatRefund).IgnoreColumns(true).ExecuteCommandAsync();
                 // 有退款，刷新一下订单状态
-                await GetPayInfoFromWechat(callbackRefundResource.OutTradeNumber);
+                await SyncPayInfoFromWechat(callbackRefundResource.OutTradeNumber);
             }
             catch (Exception ex)
             {
@@ -516,5 +561,61 @@ public class SysWechatPayService : IDynamicApiController, ITransient
 
             await _sysWechatPayRep.AsUpdateable(wechatPay).IgnoreColumns(true).ExecuteCommandAsync();
         }
+    }
+
+    /// <summary>
+    /// 获取微信支付配置就绪状态（不返回任何密钥或证书内容）
+    /// </summary>
+    [DisplayName("获取微信支付配置就绪状态")]
+    public WechatPayConfigurationStatus GetConfigurationStatus()
+    {
+        EnsurePaymentAdmin();
+        var certificatePath = GetMerchantCertificatePath();
+        return new WechatPayConfigurationStatus
+        {
+            AppIdConfigured = !string.IsNullOrWhiteSpace(_wechatPayOptions.AppId),
+            MerchantIdConfigured = !string.IsNullOrWhiteSpace(_wechatPayOptions.MerchantId),
+            MerchantV3SecretConfigured = !string.IsNullOrWhiteSpace(_wechatPayOptions.MerchantV3Secret),
+            CertificateSerialNumberConfigured = !string.IsNullOrWhiteSpace(_wechatPayOptions.MerchantCertificateSerialNumber),
+            CertificateFileConfigured = File.Exists(certificatePath),
+            PayCallbackConfigured = IsHttpsUrl(_payCallBackOptions.WechatPayUrl),
+            RefundCallbackConfigured = IsHttpsUrl(_payCallBackOptions.WechatRefundUrl),
+        };
+    }
+
+    private string GetMerchantCertificatePath()
+    {
+        var relativePath = _wechatPayOptions.MerchantCertificatePrivateKey?.TrimStart('\\', '/');
+        return Path.Combine(App.WebHostEnvironment.ContentRootPath, relativePath ?? string.Empty);
+    }
+
+    private void EnsurePaymentConfigured(bool requireRefundCallback)
+    {
+        var status = GetConfigurationStatus();
+        if (!status.ReadyForPayment) throw Oops.Oh("微信支付配置不完整，请先配置 AppId、商户号、APIv3 密钥和商户证书");
+        if (!status.PayCallbackConfigured) throw Oops.Oh("微信支付回调地址未配置为有效的 HTTPS 地址");
+        if (requireRefundCallback && !status.RefundCallbackConfigured)
+            throw Oops.Oh("微信退款回调地址未配置为有效的 HTTPS 地址");
+    }
+
+    private static bool IsHttpsUrl(string? value)
+    {
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
+    }
+
+    private static void ValidateTransactionInput(WechatPayTransactionInput input)
+    {
+        if (input.Total <= 0) throw Oops.Oh("支付金额必须大于 0");
+        if (string.IsNullOrWhiteSpace(input.Description)) throw Oops.Oh("商品描述不能为空");
+        if (input.Description.Length > 127) throw Oops.Oh("商品描述不能超过 127 个字符");
+        if (input.Attachment?.Length > 127) throw Oops.Oh("附加信息不能超过 127 个字符");
+        if (input.GoodsTag?.Length > 32) throw Oops.Oh("优惠标记不能超过 32 个字符");
+        if (input.Tags?.Length > 64) throw Oops.Oh("业务类型不能超过 64 个字符");
+    }
+
+    private void EnsurePaymentAdmin()
+    {
+        if (!_userManager.SuperAdmin && !_userManager.SysAdmin)
+            throw Oops.Oh("微信支付管理仅允许超级管理员或系统管理员访问");
     }
 }

@@ -14,6 +14,11 @@ namespace Admin.NET.Core.Service;
 [ApiDescriptionSettings(Order = 270)]
 public class SysCodeGenService : IDynamicApiController, ITransient
 {
+    private const string MaskedConnectionString = "数据库连接已由服务端安全托管";
+    private static readonly HashSet<string> SupportedGenerateTypes = new(StringComparer.Ordinal) { "100", "111", "121", "200", "211", "221" };
+    private static readonly Regex IdentifierRegex = new("^[A-Za-z_][A-Za-z0-9_]{0,127}$", RegexOptions.Compiled);
+    private static readonly Regex PagePathRegex = new("^[A-Za-z][A-Za-z0-9/_-]{0,31}$", RegexOptions.Compiled);
+    private static readonly SemaphoreSlim CodeGenWriteLock = new(1, 1);
     private readonly ISqlSugarClient _db;
 
     private readonly SysCodeGenConfigService _codeGenConfigService;
@@ -48,10 +53,13 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     [DisplayName("获取代码生成分页列表")]
     public async Task<SqlSugarPagedList<SysCodeGen>> Page(CodeGenInput input)
     {
-        return await _db.Queryable<SysCodeGen>()
+        EnsureSuperAdmin();
+        var result = await _db.Queryable<SysCodeGen>()
             .WhereIF(!string.IsNullOrWhiteSpace(input.TableName), u => u.TableName.Contains(input.TableName.Trim()))
             .WhereIF(!string.IsNullOrWhiteSpace(input.BusName), u => u.BusName.Contains(input.BusName.Trim()))
             .ToPagedListAsync(input.Page, input.PageSize);
+        result.Items.ForEach(MaskConnectionString);
+        return result;
     }
 
     /// <summary>
@@ -61,18 +69,33 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Add"), HttpPost]
     [DisplayName("增加代码生成")]
+    [UnitOfWork]
     public async Task AddCodeGen(AddCodeGenInput input)
     {
-        var isExist = await _db.Queryable<SysCodeGen>().Where(u => u.TableName == input.TableName).AnyAsync();
-        if (isExist) throw Oops.Oh(ErrorCodeEnum.D1400);
+        EnsureSuperAdmin();
+        await CodeGenWriteLock.WaitAsync();
+        try
+        {
+            await ValidateCodeGenInput(input);
+            var isExist = await _db.Queryable<SysCodeGen>().Where(u => u.TableName == input.TableName).AnyAsync();
+            if (isExist) throw Oops.Oh(ErrorCodeEnum.D1400);
 
-        if (input.TableUniqueList?.Count > 0) input.TableUniqueConfig = JSON.Serialize(input.TableUniqueList);
+            if (input.TableUniqueList?.Count > 0) input.TableUniqueConfig = JSON.Serialize(input.TableUniqueList);
+            input.ConnectionString = null;
 
-        var codeGen = input.Adapt<SysCodeGen>();
-        var newCodeGen = await _db.Insertable(codeGen).ExecuteReturnEntityAsync();
+            var codeGen = input.Adapt<SysCodeGen>();
+            var dbConfig = GetDatabaseConfig(input.ConfigId);
+            codeGen.DbType = dbConfig.DbType.ToString();
+            codeGen.ConnectionString = null;
+            var newCodeGen = await _db.Insertable(codeGen).ExecuteReturnEntityAsync();
 
-        // 增加配置表
-        _codeGenConfigService.AddList(GetColumnList(input), newCodeGen);
+            // 配置主表和字段表在同一事务内写入，任一步失败都会整体回滚。
+            await _codeGenConfigService.AddList(GetColumnList(input), newCodeGen);
+        }
+        finally
+        {
+            CodeGenWriteLock.Release();
+        }
     }
 
     /// <summary>
@@ -82,18 +105,34 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Update"), HttpPost]
     [DisplayName("更新代码生成")]
+    [UnitOfWork]
     public async Task UpdateCodeGen(UpdateCodeGenInput input)
     {
-        var isExist = await _db.Queryable<SysCodeGen>().AnyAsync(u => u.TableName == input.TableName && u.Id != input.Id);
-        if (isExist) throw Oops.Oh(ErrorCodeEnum.D1400);
+        EnsureSuperAdmin();
+        await CodeGenWriteLock.WaitAsync();
+        try
+        {
+            if (!await _db.Queryable<SysCodeGen>().AnyAsync(u => u.Id == input.Id))
+                throw Oops.Oh("代码生成记录不存在或已被删除");
+            await ValidateCodeGenInput(input);
+            var isExist = await _db.Queryable<SysCodeGen>().AnyAsync(u => u.TableName == input.TableName && u.Id != input.Id);
+            if (isExist) throw Oops.Oh(ErrorCodeEnum.D1400);
 
-        if (input.TableUniqueList?.Count > 0) input.TableUniqueConfig = JSON.Serialize(input.TableUniqueList);
-        var codeGen = input.Adapt<SysCodeGen>();
-        await _db.Updateable(codeGen).ExecuteCommandAsync();
+            input.TableUniqueConfig = input.TableUniqueList?.Count > 0 ? JSON.Serialize(input.TableUniqueList) : null;
+            input.ConnectionString = null;
+            var codeGen = input.Adapt<SysCodeGen>();
+            codeGen.DbType = GetDatabaseConfig(input.ConfigId).DbType.ToString();
+            codeGen.ConnectionString = null;
+            await _db.Updateable(codeGen).ExecuteCommandAsync();
 
-        // 更新配置表
-        await _codeGenConfigService.DeleteCodeGenConfig(codeGen.Id);
-        _codeGenConfigService.AddList(GetColumnList(input.Adapt<AddCodeGenInput>()), codeGen);
+            // 字段重建和主表更新共用事务，避免只删不增。
+            await _codeGenConfigService.DeleteCodeGenConfig(codeGen.Id);
+            await _codeGenConfigService.AddList(GetColumnList(input.Adapt<AddCodeGenInput>()), codeGen);
+        }
+        finally
+        {
+            CodeGenWriteLock.Release();
+        }
     }
 
     /// <summary>
@@ -103,19 +142,24 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Delete"), HttpPost]
     [DisplayName("删除代码生成")]
+    [UnitOfWork]
     public async Task DeleteCodeGen(List<DeleteCodeGenInput> inputs)
     {
+        EnsureSuperAdmin();
         if (inputs == null || inputs.Count < 1) return;
+        var ids = inputs.Select(u => u.Id).Where(u => u > 0).Distinct().ToList();
+        if (ids.Count != inputs.Count || ids.Count > 100) throw Oops.Oh("删除参数包含重复项或数量超限");
 
-        var codeGenConfigTaskList = new List<Task>();
-        inputs.ForEach(u =>
+        await CodeGenWriteLock.WaitAsync();
+        try
         {
-            _db.Deleteable<SysCodeGen>().In(u.Id).ExecuteCommand();
-
-            // 删除配置表
-            codeGenConfigTaskList.Add(_codeGenConfigService.DeleteCodeGenConfig(u.Id));
-        });
-        await Task.WhenAll(codeGenConfigTaskList);
+            await _db.Deleteable<SysCodeGenConfig>().Where(u => ids.Contains(u.CodeGenId)).ExecuteCommandAsync();
+            await _db.Deleteable<SysCodeGen>().Where(u => ids.Contains(u.Id)).ExecuteCommandAsync();
+        }
+        finally
+        {
+            CodeGenWriteLock.Release();
+        }
     }
 
     /// <summary>
@@ -126,7 +170,10 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     [DisplayName("获取代码生成详情")]
     public async Task<SysCodeGen> GetDetail([FromQuery] QueryCodeGenInput input)
     {
-        return await _db.Queryable<SysCodeGen>().SingleAsync(u => u.Id == input.Id);
+        EnsureSuperAdmin();
+        var result = await GetTrustedCodeGen(input.Id);
+        MaskConnectionString(result);
+        return result;
     }
 
     /// <summary>
@@ -136,8 +183,14 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     [DisplayName("获取数据库库集合")]
     public async Task<List<DatabaseOutput>> GetDatabaseList()
     {
-        var dbConfigs = _dbConnectionOptions.ConnectionConfigs;
-        return await Task.FromResult(dbConfigs.Adapt<List<DatabaseOutput>>());
+        EnsureSuperAdmin();
+        var result = _dbConnectionOptions.ConnectionConfigs.Select(u => new DatabaseOutput
+        {
+            ConfigId = u.ConfigId.ToString(),
+            DbType = u.DbType,
+            ConnectionString = MaskedConnectionString
+        }).ToList();
+        return await Task.FromResult(result);
     }
 
     /// <summary>
@@ -147,6 +200,8 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     [DisplayName("获取数据库表(实体)集合")]
     public async Task<List<TableOutput>> GetTableList(string configId = SqlSugarConst.MainConfigId)
     {
+        EnsureSuperAdmin();
+        GetDatabaseConfig(configId);
         var provider = _db.AsTenant().GetConnectionScope(configId);
         var dbTableInfos = provider.DbMaintenance.GetTableInfoList(false); // 不能走缓存,否则切库不起作用
         var config = _dbConnectionOptions.ConnectionConfigs.FirstOrDefault(u => configId.Equals(u.ConfigId));
@@ -181,6 +236,9 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     [DisplayName("根据表名获取列集合")]
     public List<ColumnOuput> GetColumnListByTableName([Required] string tableName, string configId = SqlSugarConst.MainConfigId)
     {
+        EnsureSuperAdmin();
+        if (!IdentifierRegex.IsMatch(tableName)) throw Oops.Oh("实体名称格式无效");
+        GetDatabaseConfig(configId);
         // 切库---多库代码生成用
         var provider = _db.AsTenant().GetConnectionScope(configId);
         var config = _dbConnectionOptions.ConnectionConfigs.FirstOrDefault(u => u.ConfigId.ToString() == configId) ?? throw Oops.Oh(ErrorCodeEnum.D1401);
@@ -336,7 +394,34 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     [DisplayName("获取程序保存位置")]
     public List<string> GetApplicationNamespaces()
     {
-        return _codeGenOptions.BackendApplicationNamespaces;
+        EnsureSuperAdmin();
+        return _codeGenOptions.BackendApplicationNamespaces?.ToList() ?? new();
+    }
+
+    /// <summary>
+    /// 从数据库实体重新同步字段配置
+    /// </summary>
+    [ApiDescriptionSettings(Name = "Sync"), HttpPost]
+    [DisplayName("同步代码生成字段配置")]
+    [UnitOfWork]
+    public async Task SyncCodeGen(QueryCodeGenInput input)
+    {
+        EnsureSuperAdmin();
+        await CodeGenWriteLock.WaitAsync();
+        try
+        {
+            var codeGen = await GetTrustedCodeGen(input.Id);
+            await ValidateStoredCodeGen(codeGen);
+            var columns = GetColumnList(codeGen.Adapt<AddCodeGenInput>());
+            if (columns == null || columns.Count == 0) throw Oops.Oh("未读取到实体字段，原配置保持不变");
+
+            await _codeGenConfigService.DeleteCodeGenConfig(codeGen.Id);
+            await _codeGenConfigService.AddList(columns, codeGen);
+        }
+        finally
+        {
+            CodeGenWriteLock.Release();
+        }
     }
 
     /// <summary>
@@ -345,45 +430,60 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     /// <returns></returns>
     [UnitOfWork]
     [DisplayName("代码生成到本地")]
-    public async Task<dynamic> RunLocal(SysCodeGen input)
+    public async Task<dynamic> RunLocal(QueryCodeGenInput request)
     {
-        if (string.IsNullOrEmpty(input.GenerateType))
-            input.GenerateType = "200";
-
-        // 先删除该表已生成的菜单列表
-        List<string> targetPathList;
-        var zipPath = Path.Combine(App.WebHostEnvironment.WebRootPath, "CodeGen", input.TableName!);
-        if (input.GenerateType.StartsWith('1'))
+        EnsureSuperAdmin();
+        await CodeGenWriteLock.WaitAsync();
+        try
         {
-            targetPathList = GetZipPathList(input);
-            if (Directory.Exists(zipPath)) Directory.Delete(zipPath, true);
-        }
-        else
-            targetPathList = GetTargetPathList(input);
+            var input = await GetTrustedCodeGen(request.Id);
+            await ValidateStoredCodeGen(input);
+            EnsureGenerationModeIsSafe(input);
 
-        var (tableFieldList, result) = await RenderTemplateAsync(input);
-        var templatePathList = GetTemplatePathList(input);
-        for (var i = 0; i < templatePathList.Count; i++)
+            List<string> targetPathList;
+            var zipRoot = Path.Combine(App.WebHostEnvironment.WebRootPath, "CodeGen");
+            var zipPath = EnsurePathWithin(zipRoot, Path.Combine(zipRoot, input.TableName!));
+            if (input.GenerateType!.StartsWith('1'))
+            {
+                targetPathList = GetZipPathList(input);
+                targetPathList = targetPathList.Select(path => EnsurePathWithin(zipPath, path)).ToList();
+                if (Directory.Exists(zipPath)) Directory.Delete(zipPath, true);
+            }
+            else
+            {
+                targetPathList = GetTargetPathList(input);
+                var projectRoot = new DirectoryInfo(App.WebHostEnvironment.ContentRootPath).Parent!.FullName;
+                var backendRoot = Path.Combine(projectRoot, input.NameSpace!);
+                targetPathList = targetPathList.Select(path => EnsurePathWithin(backendRoot, path)).ToList();
+                var existingFiles = targetPathList.Where(File.Exists).Select(Path.GetFileName).ToList();
+                if (existingFiles.Count > 0)
+                    throw Oops.Oh($"目标目录已存在文件：{string.Join("、", existingFiles)}。为防止覆盖源码，本次未生成");
+            }
+
+            var (_, result) = await RenderTemplateAsync(input);
+            var templatePathList = GetTemplatePathList(input);
+            for (var i = 0; i < templatePathList.Count; i++)
+            {
+                var content = result.GetValueOrDefault(templatePathList[i]?.TrimEnd(".vm"));
+                if (string.IsNullOrWhiteSpace(content)) continue;
+                var dirPath = new DirectoryInfo(targetPathList[i]).Parent!.FullName;
+                if (!Directory.Exists(dirPath)) Directory.CreateDirectory(dirPath);
+                await File.WriteAllTextAsync(targetPathList[i], content, Encoding.UTF8);
+            }
+
+            // Vben 模板完成前不自动改写菜单，避免旧 Element Plus 路由污染现有菜单树。
+
+            if (!input.GenerateType.StartsWith('1')) return null;
+
+            var downloadPath = EnsurePathWithin(zipRoot, zipPath + ".zip");
+            if (File.Exists(downloadPath)) File.Delete(downloadPath);
+            ZipFile.CreateFromDirectory(zipPath, downloadPath);
+            return new { url = $"{App.HttpContext.Request.Scheme}://{App.HttpContext.Request.Host.Value}/codeGen/{input.TableName}.zip" };
+        }
+        finally
         {
-            var content = result.GetValueOrDefault(templatePathList[i]?.TrimEnd(".vm"));
-            if (string.IsNullOrWhiteSpace(content)) continue;
-            var dirPath = new DirectoryInfo(targetPathList[i]).Parent!.FullName;
-            if (!Directory.Exists(dirPath)) Directory.CreateDirectory(dirPath);
-            _ = File.WriteAllTextAsync(targetPathList[i], content, Encoding.UTF8);
+            CodeGenWriteLock.Release();
         }
-
-        if (input.GenerateMenu) await AddMenu(input.TableName, input.BusName, input.MenuPid ?? 0, input.MenuIcon, input.PagePath, tableFieldList);
-
-        // 非ZIP压缩返回空
-        if (!input.GenerateType.StartsWith('1')) return null;
-
-        // 判断是否存在同名称文件
-        string downloadPath = zipPath + ".zip";
-        if (File.Exists(downloadPath)) File.Delete(downloadPath);
-
-        // 创建zip文件并返回下载地址
-        ZipFile.CreateFromDirectory(zipPath, downloadPath);
-        return new { url = $"{App.HttpContext.Request.Scheme}://{App.HttpContext.Request.Host.Value}/codeGen/{input.TableName}.zip" };
     }
 
     /// <summary>
@@ -391,8 +491,11 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     /// </summary>
     /// <returns></returns>
     [DisplayName("获取代码生成预览")]
-    public async Task<Dictionary<string, string>> Preview(SysCodeGen input)
+    public async Task<Dictionary<string, string>> Preview(QueryCodeGenInput request)
     {
+        EnsureSuperAdmin();
+        var input = await GetTrustedCodeGen(request.Id);
+        await ValidateStoredCodeGen(input);
         var (_, result) = await RenderTemplateAsync(input);
         return result;
     }
@@ -460,6 +563,93 @@ public class SysCodeGenService : IDynamicApiController, ITransient
             result.Add(path?.TrimEnd(".vm"), tResult);
         }
         return (tableFieldList, result);
+    }
+
+    private void EnsureSuperAdmin()
+    {
+        if (!_userManager.SuperAdmin)
+            throw Oops.Oh("代码生成仅允许超级管理员使用");
+    }
+
+    private DbConnectionConfig GetDatabaseConfig(string configId)
+    {
+        if (string.IsNullOrWhiteSpace(configId)) throw Oops.Oh("库定位器不能为空");
+        return _dbConnectionOptions.ConnectionConfigs.FirstOrDefault(u => u.ConfigId.ToString() == configId)
+            ?? throw Oops.Oh("库定位器不存在或不在服务端配置白名单中");
+    }
+
+    private async Task<SysCodeGen> GetTrustedCodeGen(long id)
+    {
+        if (id <= 0) throw Oops.Oh("代码生成记录不能为空");
+        return await _db.Queryable<SysCodeGen>().FirstAsync(u => u.Id == id)
+            ?? throw Oops.Oh("代码生成记录不存在或已被删除");
+    }
+
+    private async Task ValidateStoredCodeGen(SysCodeGen input)
+    {
+        var validateInput = input.Adapt<AddCodeGenInput>();
+        validateInput.TableUniqueList = input.TableUniqueList;
+        await ValidateCodeGenInput(validateInput);
+    }
+
+    private async Task ValidateCodeGenInput(AddCodeGenInput input)
+    {
+        if (!IdentifierRegex.IsMatch(input.TableName ?? "")) throw Oops.Oh("实体名称格式无效");
+        if (!PagePathRegex.IsMatch(input.PagePath ?? "")) throw Oops.Oh("前端目录格式无效");
+        if (!SupportedGenerateTypes.Contains(input.GenerateType ?? "")) throw Oops.Oh("生成方式无效");
+        if (_codeGenOptions.BackendApplicationNamespaces == null ||
+            !_codeGenOptions.BackendApplicationNamespaces.Contains(input.NameSpace, StringComparer.Ordinal))
+            throw Oops.Oh("后端命名空间不在服务端配置白名单中");
+
+        EnsureSafeText(input.BusName, "业务名称", 128);
+        EnsureSafeText(input.AuthorName, "作者", 32);
+        var config = GetDatabaseConfig(input.ConfigId);
+        var entityInfo = (await GetEntityInfos(input.ConfigId)).FirstOrDefault(u => u.EntityName == input.TableName)
+            ?? throw Oops.Oh("所选实体不存在或未被代码生成配置收录");
+        var provider = _db.AsTenant().GetConnectionScope(input.ConfigId);
+        var physicalTableName = config.DbSettings.EnableUnderLine ? UtilMethods.ToUnderLine(entityInfo.DbTableName) : entityInfo.DbTableName;
+        if (!provider.DbMaintenance.GetTableInfoList(false).Any(u => u.Name.Equals(physicalTableName, StringComparison.OrdinalIgnoreCase)))
+            throw Oops.Oh("实体对应的数据表不存在，请先检查库表结构");
+
+        var uniqueList = input.TableUniqueList ?? new();
+        if (uniqueList.Count > 8) throw Oops.Oh("唯一约束配置最多 8 组");
+        var entityProperties = entityInfo.Type.GetProperties().Select(u => u.Name).ToHashSet(StringComparer.Ordinal);
+        foreach (var unique in uniqueList)
+        {
+            if (unique.Columns == null || unique.Columns.Count == 0 || unique.Columns.Count > 8 ||
+                unique.Columns.Distinct(StringComparer.Ordinal).Count() != unique.Columns.Count ||
+                unique.Columns.Any(u => !entityProperties.Contains(u)))
+                throw Oops.Oh("唯一约束包含空字段、重复字段或非实体字段");
+            EnsureSafeText(unique.Message, "唯一约束提示", 128);
+        }
+    }
+
+    private static void EnsureSafeText(string value, string label, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > maxLength ||
+            value.IndexOfAny(new[] { '\"', '\'', '\\', '\r', '\n', '{', '}' }) >= 0)
+            throw Oops.Oh($"{label}不能为空、不能超长，且不能包含引号、换行、反斜杠或花括号");
+    }
+
+    private static void EnsureGenerationModeIsSafe(SysCodeGen input)
+    {
+        if (!SupportedGenerateTypes.Contains(input.GenerateType ?? "")) throw Oops.Oh("生成方式无效");
+        if (input.GenerateType is "100" or "111" or "200" or "211")
+            throw Oops.Oh("当前前端模板仍属于旧 Element Plus Web。为保护只读参考项目，暂不允许生成前端文件；可使用“后端 ZIP”或“后端本地”");
+    }
+
+    private static string EnsurePathWithin(string rootPath, string targetPath)
+    {
+        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var target = Path.GetFullPath(targetPath);
+        if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            throw Oops.Oh("生成目标路径超出允许目录");
+        return target;
+    }
+
+    private static void MaskConnectionString(SysCodeGen item)
+    {
+        item.ConnectionString = MaskedConnectionString;
     }
 
     /// <summary>

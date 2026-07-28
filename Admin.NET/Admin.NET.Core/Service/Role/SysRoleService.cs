@@ -80,9 +80,12 @@ public class SysRoleService : IDynamicApiController, ITransient
     /// <param name="input"></param>
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Add"), HttpPost]
+    [UnitOfWork]
     [DisplayName("增加角色")]
     public async Task AddRole(AddRoleInput input)
     {
+        if (!_userManager.SuperAdmin) input.TenantId = _userManager.TenantId;
+
         if (await _sysRoleRep.IsAnyAsync(u => u.Name == input.Name && u.Code == input.Code))
             throw Oops.Oh(ErrorCodeEnum.D1006);
 
@@ -115,6 +118,8 @@ public class SysRoleService : IDynamicApiController, ITransient
     [DisplayName("更新角色")]
     public async Task UpdateRole(UpdateRoleInput input)
     {
+        await GetManageableRole(input.Id);
+
         if (await _sysRoleRep.IsAnyAsync(u => u.Name == input.Name && u.Code == input.Code && u.Id != input.Id))
             throw Oops.Oh(ErrorCodeEnum.D1006);
 
@@ -134,6 +139,8 @@ public class SysRoleService : IDynamicApiController, ITransient
     [DisplayName("删除角色")]
     public async Task DeleteRole(DeleteRoleInput input)
     {
+        var sysRole = await GetManageableRole(input.Id);
+
         // 若角色有用户则禁止删除
         var userIds = await _sysUserRoleService.GetUserIdList(input.Id);
         if (userIds != null && userIds.Count > 0) throw Oops.Oh(ErrorCodeEnum.D1025);
@@ -142,7 +149,6 @@ public class SysRoleService : IDynamicApiController, ITransient
         var hasUserRegWay = await _sysRoleRep.Context.Queryable<SysUserRegWay>().AnyAsync(u => u.RoleId == input.Id);
         if (hasUserRegWay) throw Oops.Oh(ErrorCodeEnum.D1033);
 
-        var sysRole = await _sysRoleRep.GetFirstAsync(u => u.Id == input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
         await _sysRoleRep.DeleteAsync(sysRole);
 
         // 级联删除角色机构数据
@@ -164,6 +170,8 @@ public class SysRoleService : IDynamicApiController, ITransient
     [DisplayName("授权角色菜单")]
     public async Task GrantMenu(RoleMenuInput input)
     {
+        var role = await GetManageableRole(input.Id);
+        await ValidateGrantedMenus(role, input.MenuIdList);
         await _sysRoleMenuService.GrantRoleMenu(input);
     }
 
@@ -176,6 +184,8 @@ public class SysRoleService : IDynamicApiController, ITransient
     [DisplayName("授权角色数据范围")]
     public async Task GrantDataScope(RoleOrgInput input)
     {
+        var role = await GetManageableRole(input.Id);
+
         // 删除与该角色相关的用户机构缓存
         var userIdList = await _sysUserRoleService.GetUserIdList(input.Id);
         foreach (var userId in userIdList)
@@ -183,7 +193,6 @@ public class SysRoleService : IDynamicApiController, ITransient
             SqlSugarFilter.DeleteUserOrgCache(userId, _sysRoleRep.Context.CurrentConnectionConfig.ConfigId.ToString());
         }
 
-        var role = await _sysRoleRep.GetFirstAsync(u => u.Id == input.Id);
         var dataScope = input.DataScope;
         if (!_userManager.SuperAdmin)
         {
@@ -221,6 +230,7 @@ public class SysRoleService : IDynamicApiController, ITransient
     [DisplayName("根据角色Id获取菜单Id集合")]
     public async Task<List<long>> GetOwnMenuList([FromQuery] RoleInput input)
     {
+        await GetManageableRole(input.Id);
         var menuIds = await _sysRoleMenuService.GetRoleMenuIdList(new List<long> { input.Id });
         return await _sysMenuService.ExcludeParentMenuOfFullySelected(menuIds);
     }
@@ -233,6 +243,7 @@ public class SysRoleService : IDynamicApiController, ITransient
     [DisplayName("根据角色Id获取机构Id集合")]
     public async Task<List<long>> GetOwnOrgList([FromQuery] RoleInput input)
     {
+        await GetManageableRole(input.Id);
         return await _sysRoleOrgService.GetRoleOrgIdList(new List<long> { input.Id });
     }
 
@@ -244,11 +255,51 @@ public class SysRoleService : IDynamicApiController, ITransient
     [DisplayName("设置角色状态")]
     public async Task<int> SetStatus(RoleInput input)
     {
+        await GetManageableRole(input.Id);
         if (!Enum.IsDefined(typeof(StatusEnum), input.Status)) throw Oops.Oh(ErrorCodeEnum.D3005);
 
         return await _sysRoleRep.AsUpdateable()
             .SetColumns(u => u.Status == input.Status)
             .Where(u => u.Id == input.Id)
             .ExecuteCommandAsync();
+    }
+
+    /// <summary>
+    /// 校验当前账号是否可以操作目标角色。
+    /// </summary>
+    private async Task<SysRole> GetManageableRole(long roleId)
+    {
+        var role = await _sysRoleRep.AsQueryable().ClearFilter()
+            .FirstAsync(u => u.Id == roleId && !u.IsDelete) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+        if (_userManager.SuperAdmin) return role;
+        if (role.TenantId != _userManager.TenantId) throw Oops.Oh(ErrorCodeEnum.D1016);
+        if (_userManager.SysAdmin) return role;
+
+        var ownRoleIds = await _sysUserRoleService.GetUserRoleIdList(_userManager.UserId);
+        if (role.CreateUserId != _userManager.UserId && !ownRoleIds.Contains(role.Id))
+            throw Oops.Oh(ErrorCodeEnum.D1016);
+
+        return role;
+    }
+
+    /// <summary>
+    /// 菜单授权只能使用目标租户拥有的菜单，普通账号不能授予超出自身的菜单。
+    /// </summary>
+    private async Task ValidateGrantedMenus(SysRole role, List<long> menuIds)
+    {
+        var requestedIds = (menuIds ?? new List<long>()).Where(u => u > 0).Distinct().ToList();
+        if (requestedIds.Count == 0) return;
+
+        var (tenantMenuQuery, _) = _sysMenuService.GetSugarQueryableAndTenantId(role.TenantId ?? 0);
+        var tenantMenuIds = await tenantMenuQuery
+            .Where(u => requestedIds.Contains(u.Id))
+            .Select(u => u.Id)
+            .ToListAsync();
+        if (tenantMenuIds.Distinct().Count() != requestedIds.Count)
+            throw Oops.Oh(ErrorCodeEnum.D1016);
+
+        if (_userManager.SuperAdmin || _userManager.SysAdmin) return;
+        var ownMenuIds = await _sysMenuService.GetMenuIdList();
+        if (!requestedIds.All(ownMenuIds.Contains)) throw Oops.Oh(ErrorCodeEnum.D1016);
     }
 }

@@ -49,9 +49,12 @@ public class SysLogVisService : IDynamicApiController, ITransient
     /// <returns></returns>
     [ApiDescriptionSettings(Name = "Clear"), HttpPost]
     [DisplayName("清空访问日志")]
-    public void Clear()
+    public async Task<int> Clear(LogInput? input = null)
     {
-        _sysLogVisRep.AsSugarClient().DbMaintenance.TruncateTable<SysLogVis>();
+        if (!_userManager.SuperAdmin) throw Oops.Oh(ErrorCodeEnum.D3010);
+        if (input?.TenantId > 0)
+            return await _sysLogVisRep.AsDeleteable().Where(u => u.TenantId == input.TenantId).ExecuteCommandAsync();
+        return await _sysLogVisRep.AsDeleteable().ExecuteCommandAsync();
     }
 
     /// <summary>
@@ -62,7 +65,7 @@ public class SysLogVisService : IDynamicApiController, ITransient
     public async Task<List<LogVisOutput>> GetList()
     {
         return await _sysLogVisRep.AsQueryable()
-            .Where(u => u.Longitude > 0 && u.Longitude > 0)
+            .Where(u => u.Longitude > 0 && u.Latitude > 0)
             .Select(u => new LogVisOutput
             {
                 Location = u.Location,
