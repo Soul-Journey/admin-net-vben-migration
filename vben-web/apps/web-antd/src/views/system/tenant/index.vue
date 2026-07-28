@@ -1334,7 +1334,7 @@ onMounted(loadTenants);
               <Col :span="24">
                 <Form.Item label="Logo" name="logo">
                   <Upload
-                    accept=".jpg,.jpeg,.png,.svg"
+                    accept=".jpg,.jpeg,.png"
                     :before-upload="beforeLogoUpload"
                     :max-count="1"
                     :show-upload-list="false"

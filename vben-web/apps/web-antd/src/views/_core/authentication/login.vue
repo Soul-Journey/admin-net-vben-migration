@@ -12,6 +12,13 @@ defineOptions({ name: 'Login' });
 
 const authStore = useAuthStore();
 
+const defaultUsername = import.meta.env.DEV
+  ? import.meta.env.VITE_DEFAULT_USER || ''
+  : '';
+const defaultPassword = import.meta.env.DEV
+  ? import.meta.env.VITE_DEFAULT_USER_PASSWORD || ''
+  : '';
+
 const formSchema = computed((): VbenFormSchema[] => {
   return [
     {
@@ -24,7 +31,7 @@ const formSchema = computed((): VbenFormSchema[] => {
       rules: z
         .string()
         .min(1, { message: $t('authentication.usernameTip') })
-        .default(import.meta.env.VITE_DEFAULT_USER || 'superadmin'),
+        .default(defaultUsername),
     },
     {
       component: 'VbenInputPassword',
@@ -36,7 +43,7 @@ const formSchema = computed((): VbenFormSchema[] => {
       rules: z
         .string()
         .min(1, { message: $t('authentication.passwordTip') })
-        .default(import.meta.env.VITE_DEFAULT_USER_PASSWORD || '123456'),
+        .default(defaultPassword),
     },
     {
       component: markRaw(SliderCaptcha),

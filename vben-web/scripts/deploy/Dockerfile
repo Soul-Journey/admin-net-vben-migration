@@ -22,15 +22,18 @@ RUN echo "Builder Success 🎉"
 
 FROM nginx:stable-alpine AS production
 
+# Admin.NET 后端地址可在 docker run / compose 中覆盖。
+ENV ADMINNET_BACKEND=http://host.docker.internal:5005
+
 # 配置 nginx
 RUN echo "types { application/javascript js mjs; }" > /etc/nginx/conf.d/mjs.conf \
     && rm -rf /etc/nginx/conf.d/default.conf
 
 # 复制构建产物
-COPY --from=builder /app/playground/dist /usr/share/nginx/html
+COPY --from=builder /app/apps/web-antd/dist /usr/share/nginx/html
 
-# 复制 nginx 配置
-COPY --from=builder /app/scripts/deploy/nginx.conf /etc/nginx/nginx.conf
+# 官方 nginx 镜像启动时会把 ADMINNET_BACKEND 注入模板。
+COPY --from=builder /app/scripts/deploy/adminnet.conf.template /etc/nginx/templates/default.conf.template
 
 EXPOSE 8080
 

@@ -184,6 +184,7 @@ public class SysTenantService : IDynamicApiController, ITransient
         var tenant = input.Adapt<TenantOutput>();
 
         // 设置logo
+        tenant.Logo = null;
         SetLogoUrl(tenant, input.LogoBase64, input.LogoFileName);
 
         // 取最大`id + 100` 为新租户`id`，方便数据维护
@@ -204,37 +205,77 @@ public class SysTenantService : IDynamicApiController, ITransient
     [NonAction]
     public void SetLogoUrl(SysTenant tenant, string logoBase64, string logoFileName)
     {
-        // 旧图标文件相对路径
-        var oldSysLogoRelativeFilePath = tenant.Logo ?? "";
-        var oldSysLogoAbsoluteFilePath = Path.Combine(App.WebHostEnvironment.WebRootPath, oldSysLogoRelativeFilePath.TrimStart('/'));
+        var match = Regex.Match(
+            logoBase64,
+            @"^data:image/(?<type>png|jpeg);base64,(?<data>[A-Za-z0-9+/=]+)$",
+            RegexOptions.IgnoreCase);
+        if (!match.Success) throw Oops.Oh("租户图标仅支持 PNG、JPG 或 JPEG 格式");
 
-        var groups = Regex.Match(logoBase64, @"data:image/(?<type>.+?);base64,(?<data>.+)").Groups;
-
-        //var type = groups["type"].Value;
-        var base64Data = groups["data"].Value;
-        var binData = Convert.FromBase64String(base64Data);
+        byte[] binData;
+        try
+        {
+            binData = Convert.FromBase64String(match.Groups["data"].Value);
+        }
+        catch (FormatException)
+        {
+            throw Oops.Oh("租户图标内容不是有效的 Base64 数据");
+        }
+        if (binData.Length > 2 * 1024 * 1024) throw Oops.Oh("租户图标不能超过 2MB");
 
         // 根据文件名取扩展名
-        var ext = string.IsNullOrWhiteSpace(logoFileName) ? ".png" : Path.GetExtension(logoFileName);
+        var ext = Path.GetExtension(logoFileName)?.ToLowerInvariant();
+        if (ext is not ".png" and not ".jpg" and not ".jpeg")
+            throw Oops.Oh("租户图标文件扩展名仅支持 .png、.jpg 或 .jpeg");
 
         // 本地图标保存路径
-        var fileName = $"{tenant.ViceTitle}-logo{ext}".ToLower();
-        var path = _uploadOptions.Path.Replace("/{yyyy}/{MM}/{dd}", "");
-        path = path.StartsWith("/") || Regex.IsMatch(path, "^[A-Z|a-z]:") ? path : Path.Combine(App.WebHostEnvironment.WebRootPath, path);
+        var invalidFileNameChars = Path.GetInvalidFileNameChars()
+            .Concat(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar })
+            .ToHashSet();
+        var safeViceTitle = new string((tenant.ViceTitle ?? "tenant")
+            .Select(u => invalidFileNameChars.Contains(u) ? '_' : u)
+            .ToArray())
+            .Trim();
+        if (string.IsNullOrWhiteSpace(safeViceTitle)) safeViceTitle = "tenant";
+        var fileName = $"{safeViceTitle}-logo{ext}".ToLowerInvariant();
+        var path = GetTenantLogoUploadRoot();
         var absoluteFilePath = Path.Combine(path, fileName);
 
-        // 删除已存在文件
-        if (File.Exists(oldSysLogoAbsoluteFilePath)) File.Delete(oldSysLogoAbsoluteFilePath);
+        // 只清理上传目录内的旧租户图标，禁止删除 wwwroot/images 等公共资源。
+        DeleteManagedTenantLogo(tenant.Logo);
 
         // 创建文件夹
         var absoluteFileDir = Path.GetDirectoryName(absoluteFilePath);
         if (!Directory.Exists(absoluteFileDir)) Directory.CreateDirectory(absoluteFileDir);
 
         // 保存图标文件
-        File.WriteAllBytesAsync(absoluteFilePath, binData);
+        File.WriteAllBytes(absoluteFilePath, binData);
 
         // 保存图标配置
         tenant.Logo = $"/upload/{fileName}";
+    }
+
+    private string GetTenantLogoUploadRoot()
+    {
+        var path = _uploadOptions.Path.Replace("/{yyyy}/{MM}/{dd}", "");
+        path = path.StartsWith("/") || Regex.IsMatch(path, "^[A-Z|a-z]:")
+            ? path
+            : Path.Combine(App.WebHostEnvironment.WebRootPath, path);
+        return Path.GetFullPath(path);
+    }
+
+    private void DeleteManagedTenantLogo(string? logo)
+    {
+        if (string.IsNullOrWhiteSpace(logo)) return;
+
+        var uploadRoot = GetTenantLogoUploadRoot()
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var absoluteFilePath = Path.GetFullPath(Path.Combine(
+            App.WebHostEnvironment.WebRootPath,
+            logo.TrimStart('/', '\\')));
+        var managedUploadPrefix = uploadRoot + Path.DirectorySeparatorChar;
+        if (absoluteFilePath.StartsWith(managedUploadPrefix, StringComparison.OrdinalIgnoreCase) &&
+            File.Exists(absoluteFilePath))
+            File.Delete(absoluteFilePath);
     }
 
     /// <summary>
@@ -387,38 +428,59 @@ public class SysTenantService : IDynamicApiController, ITransient
         // 禁止删除默认租户
         if (input.Id.ToString() == SqlSugarConst.MainConfigId) throw Oops.Oh(ErrorCodeEnum.D1023);
 
+        var tenant = await _sysTenantRep.AsQueryable().ClearFilter()
+            .FirstAsync(u => u.Id == input.Id && !u.IsDelete) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+
         // 若账号为开放接口绑定租户则禁止删除
         var isOpenAccessTenant = await _sysTenantRep.ChangeRepository<SqlSugarRepository<SysOpenAccess>>().IsAnyAsync(u => u.BindTenantId == input.Id);
         if (isOpenAccessTenant) throw Oops.Oh(ErrorCodeEnum.D1031);
 
+        // 先取得关联主键，再删除关系表，避免删除主表后无法精确定位关系数据。
+        var userIds = await _sysUserRep.AsQueryable().ClearFilter()
+            .Where(u => u.TenantId == input.Id)
+            .Select(u => u.Id)
+            .ToListAsync();
+        var roleIds = await _sysRoleRep.AsQueryable().ClearFilter()
+            .Where(u => u.TenantId == input.Id)
+            .Select(u => u.Id)
+            .ToListAsync();
+
+        await _sysTenantMenuRep.AsDeleteable().Where(u => u.TenantId == input.Id).ExecuteCommandAsync();
+
+        if (userIds.Count > 0)
+        {
+            await _sysTenantRep.Context.Deleteable<SysUserMenu>()
+                .Where(u => userIds.Contains(u.UserId))
+                .ExecuteCommandAsync();
+            await _userRoleRep.AsDeleteable()
+                .Where(u => userIds.Contains(u.UserId))
+                .ExecuteCommandAsync();
+            await _sysUserExtOrgRep.AsDeleteable()
+                .Where(u => userIds.Contains(u.UserId))
+                .ExecuteCommandAsync();
+        }
+
+        if (roleIds.Count > 0)
+        {
+            await _sysRoleMenuRep.AsDeleteable()
+                .Where(u => roleIds.Contains(u.RoleId))
+                .ExecuteCommandAsync();
+            await _sysTenantRep.Context.Deleteable<SysRoleOrg>()
+                .Where(u => roleIds.Contains(u.RoleId))
+                .ExecuteCommandAsync();
+            await _userRoleRep.AsDeleteable()
+                .Where(u => roleIds.Contains(u.RoleId))
+                .ExecuteCommandAsync();
+        }
+
+        await _sysUserRep.AsDeleteable().Where(u => u.TenantId == input.Id).ExecuteCommandAsync();
+        await _sysRoleRep.AsDeleteable().Where(u => u.TenantId == input.Id).ExecuteCommandAsync();
+        await _sysOrgRep.AsDeleteable().Where(u => u.TenantId == input.Id).ExecuteCommandAsync();
+        await _sysPosRep.AsDeleteable().Where(u => u.TenantId == input.Id).ExecuteCommandAsync();
         await _sysTenantRep.DeleteAsync(u => u.Id == input.Id);
 
+        DeleteManagedTenantLogo(tenant.Logo);
         await CacheTenant(input.Id);
-
-        // 删除与租户相关的表数据
-        await _sysTenantMenuRep.AsDeleteable().Where(u => u.TenantId == input.Id).ExecuteCommandAsync();
-        var menuIds = await _sysTenantRep.Context.Queryable<SysMenu>().Select(u => u.Id).ToListAsync();
-        await _sysTenantRep.Context.Deleteable<SysRoleMenu>().Where(u => menuIds.Contains(u.Id)).ExecuteCommandAsync();
-        await _sysTenantRep.Context.Deleteable<SysUserMenu>().Where(u => menuIds.Contains(u.Id)).ExecuteCommandAsync();
-        await _sysTenantRep.Context.Deleteable<SysMenu>().Where(u => menuIds.Contains(u.Id)).ExecuteCommandAsync();
-
-        var users = await _sysUserRep.AsQueryable().ClearFilter().Where(u => u.TenantId == input.Id).ToListAsync();
-        var userIds = users.Select(u => u.Id).ToList();
-        await _sysUserRep.AsDeleteable().Where(u => userIds.Contains(u.Id)).ExecuteCommandAsync();
-
-        await _userRoleRep.AsDeleteable().Where(u => userIds.Contains(u.UserId)).ExecuteCommandAsync();
-
-        await _sysUserExtOrgRep.AsDeleteable().Where(u => userIds.Contains(u.UserId)).ExecuteCommandAsync();
-
-        await _sysRoleRep.AsDeleteable().Where(u => u.TenantId == input.Id).ExecuteCommandAsync();
-
-        var roleIds = await _sysRoleRep.AsQueryable().ClearFilter()
-            .Where(u => u.TenantId == input.Id).Select(u => u.Id).ToListAsync();
-        await _sysRoleMenuRep.AsDeleteable().Where(u => roleIds.Contains(u.RoleId)).ExecuteCommandAsync();
-
-        await _sysOrgRep.AsDeleteable().Where(u => u.TenantId == input.Id).ExecuteCommandAsync();
-
-        await _sysPosRep.AsDeleteable().Where(u => u.TenantId == input.Id).ExecuteCommandAsync();
     }
 
     /// <summary>
@@ -486,14 +548,21 @@ public class SysTenantService : IDynamicApiController, ITransient
     [DisplayName("授权租户菜单")]
     public async Task GrantMenu(TenantMenuInput input)
     {
-        input.MenuIdList = input.MenuIdList.Distinct().ToList();
+        _ = await _sysTenantRep.AsQueryable().ClearFilter()
+            .FirstAsync(u => u.Id == input.Id && !u.IsDelete) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+
+        input.MenuIdList = (input.MenuIdList ?? new List<long>())
+            .Where(u => u > 0)
+            .Distinct()
+            .ToList();
 
         // 获取需要授权的菜单列表
         var menuList = await _sysTenantRep.Context.Queryable<SysMenu>()
             .Where(u => input.MenuIdList.Contains(u.Id))
-            .InnerJoin<SysTenantMenu>((u, t) => t.TenantId == input.Id && u.Id == t.MenuId)
             .Distinct()
             .ToListAsync();
+        if (menuList.Select(u => u.Id).Distinct().Count() != input.MenuIdList.Count)
+            throw Oops.Oh(ErrorCodeEnum.D1002);
 
         // 检查是否存在重复菜单
         if (menuList.Where(u => u.Type != MenuTypeEnum.Btn).GroupBy(u => new { u.Pid, u.Title }).Any(u => u.Count() > 1) ||
@@ -585,14 +654,32 @@ public class SysTenantService : IDynamicApiController, ITransient
     [DisplayName("同步授权菜单")]
     public async Task SyncGrantMenu(BaseIdInput input)
     {
-        var menuIdList = input.Id == SqlSugarConst.DefaultTenantId
-            ? new SysMenuSeedData().HasData().Select(u => u.Id).ToList()
-            : await _sysRoleRep.AsQueryable().ClearFilter()
-              .InnerJoin<SysTenant>((u, t) => t.Id == input.Id && u.TenantId == t.Id)
-              .InnerJoin<SysRoleMenu>((u, t, rm) => u.Id == rm.RoleId)
-              .Select((u, t, rm) => rm.MenuId)
-              .Distinct()
-              .ToListAsync() ?? throw Oops.Oh(ErrorCodeEnum.D1019);
+        _ = await _sysTenantRep.AsQueryable().ClearFilter()
+            .FirstAsync(u => u.Id == input.Id && !u.IsDelete) ?? throw Oops.Oh(ErrorCodeEnum.D1002);
+
+        var currentMenuIds = await _sysTenantMenuRep.AsQueryable()
+            .Where(u => u.TenantId == input.Id)
+            .Select(u => u.MenuId)
+            .Distinct()
+            .ToListAsync();
+        var roleMenuIds = await _sysRoleRep.AsQueryable().ClearFilter()
+            .Where(u => u.TenantId == input.Id)
+            .InnerJoin<SysRoleMenu>((u, rm) => u.Id == rm.RoleId)
+            .Select((u, rm) => rm.MenuId)
+            .Distinct()
+            .ToListAsync();
+        var menuIdList = currentMenuIds.Concat(roleMenuIds).Distinct().ToList();
+
+        // 默认租户应同步当前数据库的全部菜单，包括插件动态增加的菜单。
+        if (input.Id == SqlSugarConst.DefaultTenantId)
+        {
+            var allMenuIds = await _sysTenantRep.Context.Queryable<SysMenu>()
+                .Select(u => u.Id)
+                .ToListAsync();
+            menuIdList = menuIdList.Concat(allMenuIds).Distinct().ToList();
+        }
+
+        // 兼容旧版本的 sys_admin 角色：先保留其菜单，再移除旧角色模型。
         var adminRole = await _sysRoleRep.AsQueryable().ClearFilter().FirstAsync(u => u.TenantId == input.Id && u.Code == "sys_admin");
         if (adminRole != null)
         {

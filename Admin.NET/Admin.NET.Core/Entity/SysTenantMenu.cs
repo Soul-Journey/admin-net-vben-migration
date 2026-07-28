@@ -11,6 +11,7 @@ namespace Admin.NET.Core;
 /// </summary>
 [SysTable]
 [SugarTable(null, "系统租户菜单表")]
+[SugarIndex("UX_SysTenantMenu_TenantId_MenuId", nameof(TenantId), OrderByType.Asc, nameof(MenuId), OrderByType.Asc, true)]
 public class SysTenantMenu : EntityBaseId
 {
     /// <summary>
