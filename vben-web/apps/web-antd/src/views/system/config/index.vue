@@ -19,9 +19,11 @@ import {
   Button,
   Col,
   Descriptions,
+  Dropdown,
   Form,
   Input,
   InputNumber,
+  Menu,
   message,
   Modal,
   Popover,
@@ -52,6 +54,7 @@ const SUPER_ADMIN_ACCOUNT = 999;
 const { hasAccessByCodes } = useAccess();
 const userStore = useUserStore();
 const loading = ref(false);
+const exportLoading = ref(false);
 const submitLoading = ref(false);
 const modalOpen = ref(false);
 const editingId = ref<number>();
@@ -231,6 +234,89 @@ function batchRemove() {
   });
 }
 
+async function exportConfigs(scope: 'all' | 'page') {
+  exportLoading.value = true;
+  try {
+    let data = records.value;
+    if (scope === 'all') {
+      const result = await pageConfigsApi({
+        code: query.code || undefined,
+        groupCode: query.groupCode,
+        name: query.name || undefined,
+        page: 1,
+        pageSize: Math.max(total.value, query.pageSize, 1),
+      });
+      data = result.items ?? [];
+    }
+
+    if (data.length === 0) {
+      message.warning('当前条件下没有可导出的参数');
+      return;
+    }
+
+    const startIndex = scope === 'page' ? (query.page - 1) * query.pageSize : 0;
+    const headers = [
+      '序号',
+      '参数名称',
+      '参数编码',
+      '参数值',
+      '内置参数',
+      '分组编码',
+      '排序',
+      '备注',
+      '创建者',
+      '创建时间',
+      '修改者',
+      '修改时间',
+    ];
+    const rows = data.map((record, index) => [
+      startIndex + index + 1,
+      valueText(record.name),
+      valueText(record.code),
+      valueText(record.value),
+      record.sysFlag === 1 ? '是' : '否',
+      valueText(record.groupCode),
+      record.orderNo ?? '',
+      valueText(record.remark),
+      valueText(record.createUserName),
+      valueText(record.createTime),
+      valueText(record.updateUserName),
+      valueText(record.updateTime),
+    ]);
+    const escapeCsvCell = (value: unknown) => {
+      let text = String(value ?? '');
+      if (/^[=+\-@]/.test(text)) {
+        text = `'${text}`;
+      }
+      return `"${text.replaceAll('"', '""')}"`;
+    };
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => escapeCsvCell(cell)).join(','))
+      .join('\r\n');
+    const timestamp = new Date()
+      .toLocaleString('zh-CN', { hour12: false })
+      .replaceAll('/', '-')
+      .replaceAll(':', '-')
+      .replaceAll(' ', '_');
+    const blob = new Blob([`\uFEFF${csv}`], {
+      type: 'text/csv;charset=utf-8',
+    });
+    const downloadUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = downloadUrl;
+    anchor.download = `系统参数_${timestamp}.csv`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(downloadUrl);
+    message.success(`已导出 ${data.length} 条参数`);
+  } catch {
+    message.error('参数导出失败，请稍后重试');
+  } finally {
+    exportLoading.value = false;
+  }
+}
+
 async function resetQuery() {
   query.name = '';
   query.code = '';
@@ -253,6 +339,25 @@ onMounted(async () => {
           <p>维护系统运行参数与租户覆盖值，修改后自动刷新缓存</p>
         </div>
         <Space>
+          <Dropdown :disabled="exportLoading" :trigger="['click']">
+            <Button :loading="exportLoading">
+              <template #icon>
+                <IconifyIcon icon="lucide:download" />
+              </template>
+              导出
+              <IconifyIcon icon="lucide:chevron-down" />
+            </Button>
+            <template #overlay>
+              <Menu>
+                <Menu.Item key="page" @click="exportConfigs('page')">
+                  导出本页数据
+                </Menu.Item>
+                <Menu.Item key="all" @click="exportConfigs('all')">
+                  导出全部数据
+                </Menu.Item>
+              </Menu>
+            </template>
+          </Dropdown>
           <Button
             v-if="selectedKeys.length > 0 && can('sysConfig:batchDelete')"
             danger

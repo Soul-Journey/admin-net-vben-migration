@@ -34,9 +34,10 @@ public class SysDictDataService : IDynamicApiController, ITransient
     [DisplayName("获取字典值分页列表")]
     public async Task<SqlSugarPagedList<SysDictData>> Page(PageDictDataInput input)
     {
+        var label = input.Label?.Trim();
         return await _sysDictDataRep.AsQueryable()
             .Where(u => u.DictTypeId == input.DictTypeId)
-            .WhereIF(!string.IsNullOrEmpty(input.Label?.Trim()), u => u.Value.Contains(input.Label))
+            .WhereIF(!string.IsNullOrEmpty(label), u => u.Label.Contains(label))
             .OrderBy(u => new { u.OrderNo, Code = u.Value })
             .ToPagedListAsync(input.Page, input.PageSize);
     }
@@ -140,7 +141,7 @@ public class SysDictDataService : IDynamicApiController, ITransient
     {
         var dictData = await _sysDictDataRep.GetByIdAsync(input.Id) ?? throw Oops.Oh(ErrorCodeEnum.D3004);
 
-        var dictTypeCode = await _sysDictDataRep.AsQueryable().ClearFilter().Where(u => u.DictTypeId == dictData.Id).Select(u => u.DictType.Code).FirstAsync();
+        var dictTypeCode = await _sysDictDataRep.AsQueryable().ClearFilter().Where(u => u.DictTypeId == dictData.DictTypeId).Select(u => u.DictType.Code).FirstAsync();
         _sysCacheService.Remove($"{CacheConst.KeyDict}{dictTypeCode}");
 
         dictData.Status = input.Status;
