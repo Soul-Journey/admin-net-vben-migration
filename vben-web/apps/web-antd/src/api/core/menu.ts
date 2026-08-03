@@ -5,12 +5,20 @@ import type { AdminNetMenuItem } from '#/api/adminnet/types';
 import { requestClient } from '#/api/request';
 import { mapAdminNetMenusToVbenRoutes } from '#/utils/adminnet/menu-adapter';
 
+const localPageModules = import.meta.glob('../../views/**/*.vue');
+const localPageComponents = new Set(
+  Object.keys(localPageModules).map((path) =>
+    path.replace('../../views/', '').replace(/\.vue$/, ''),
+  ),
+);
+
 export async function getAllMenusApi() {
   const menus = await requestClient.get<AdminNetMenuItem[]>(
     '/sysMenu/loginMenuTree',
   );
   const routes = mapAdminNetMenusToVbenRoutes(
     menus,
+    localPageComponents,
   ) as RouteRecordStringComponent[];
   appendJobDashboardRoute(routes);
   return routes;

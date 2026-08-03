@@ -6,6 +6,7 @@ import type {
   CodeGenColumnRecord,
   CodeGenDatabaseRecord,
   CodeGenFieldConfig,
+  CodeGenGenerateTypeRecord,
   CodeGenTableRecord,
   SaveCodeGenParams,
   SysCodeGenRecord,
@@ -47,6 +48,7 @@ import {
   listCodeGenColumnsApi,
   listCodeGenDatabasesApi,
   listCodeGenFieldConfigsApi,
+  listCodeGenGenerateTypesApi,
   listCodeGenNamespacesApi,
   listCodeGenTablesApi,
   listDictTypesApi,
@@ -65,8 +67,8 @@ defineOptions({ name: 'AdminNetSystemCodeGen' });
 type CodeGenFormState = Partial<SaveCodeGenParams> & { id?: number };
 
 const SUPER_ADMIN_ACCOUNT = 999;
-const SAFE_GENERATE_TYPES = new Set(['121', '221']);
-const FRONTEND_GENERATE_TYPES = new Set(['100', '111', '200', '211']);
+const SAFE_GENERATE_TYPES = new Set(['102', '112', '121', '202', '212', '221']);
+const SOURCE_GENERATE_TYPES = new Set(['202', '212', '221']);
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const pagePathPattern = /^[A-Za-z][A-Za-z0-9/_-]{0,31}$/;
 const userStore = useUserStore();
@@ -87,7 +89,7 @@ const databases = ref<CodeGenDatabaseRecord[]>([]);
 const tables = ref<CodeGenTableRecord[]>([]);
 const entityColumns = ref<CodeGenColumnRecord[]>([]);
 const namespaces = ref<string[]>([]);
-const generationTypes = ref<Array<{ label: string; value: string }>>([]);
+const generationTypes = ref<CodeGenGenerateTypeRecord[]>([]);
 const printTypes = ref<Array<{ label: string; value: string }>>([]);
 const printTemplates = ref<SysPrintRecord[]>([]);
 const dictTypes = ref<SysDictTypeRecord[]>([]);
@@ -145,7 +147,7 @@ const relationColumnOptions = computed(() =>
 );
 const previewNames = computed(() => Object.keys(previewFiles.value));
 const generationExpectedText = computed(() =>
-  currentRecord.value?.generateType === '221'
+  SOURCE_GENERATE_TYPES.has(currentRecord.value?.generateType || '')
     ? currentRecord.value?.tableName || ''
     : '下载',
 );
@@ -344,7 +346,7 @@ async function openEditor(record?: SysCodeGenRecord, copy = false) {
       : {
           authorName: 'Admin.NET',
           generateMenu: false,
-          generateType: '121',
+          generateType: '102',
           nameSpace: namespaces.value[0],
           pagePath: 'develop',
           printType: 'off',
@@ -613,9 +615,9 @@ async function runGeneration() {
     const result = await runCodeGenApi(currentRecord.value.id);
     if (result?.url) {
       window.open(result.url, '_blank', 'noopener,noreferrer');
-      message.success('后端代码压缩包已生成，下载已开始');
+      message.success('代码压缩包已生成，下载已开始');
     } else {
-      message.success('后端代码已写入项目目录，请立即检查 Git 变更并编译');
+      message.success('代码已写入受控项目目录，请立即检查 Git 变更并编译');
     }
     generationOpen.value = false;
   } finally {
@@ -637,7 +639,7 @@ async function loadOptions() {
   ] = await Promise.all([
     listCodeGenDatabasesApi(),
     listCodeGenNamespacesApi(),
-    getDictDataByCodeApi('code_gen_create_type', 1),
+    listCodeGenGenerateTypesApi(),
     getDictDataByCodeApi('code_gen_print_type', 1),
     pagePrintsApi({ page: 1, pageSize: 500 }),
     listDictTypesApi(),
@@ -646,10 +648,7 @@ async function loadOptions() {
   ]);
   databases.value = dbList;
   namespaces.value = namespaceList;
-  generationTypes.value = generateList.map((item) => ({
-    label: item.label,
-    value: item.value,
-  }));
+  generationTypes.value = generateList;
   printTypes.value = printTypeList.map((item) => ({
     label: item.label,
     value: item.value,
@@ -728,8 +727,8 @@ onMounted(async () => {
 
       <Alert
         class="migration-alert"
-        message="前端模板迁移期间，只开放后端代码生成"
-        description="旧模板生成的是 Element Plus 页面，且目标目录指向只读参考项目 Web。新版已在后台阻止前端生成，也不会自动改写菜单；后端 ZIP 和后端本地生成仍可使用。"
+        message="已支持生成 Vben 页面和 API"
+        description="可下载 Vben 前端、.NET 后端或前后端组合 ZIP，也可受控写入当前项目。旧版 Web 永久只读；为避免权限树重复或覆盖，生成后请在菜单管理中手动新增路由。"
         show-icon
         type="info"
       />
@@ -994,13 +993,9 @@ onMounted(async () => {
               <Select.Option
                 v-for="item in generationTypes"
                 :key="item.value"
-                :disabled="FRONTEND_GENERATE_TYPES.has(item.value)"
                 :value="item.value"
               >
-                {{ item.label
-                }}<span v-if="FRONTEND_GENERATE_TYPES.has(item.value)"
-                  >（前端模板迁移中）</span
-                >
+                {{ item.label }}
               </Select.Option>
             </Select>
           </Form.Item>
@@ -1027,8 +1022,8 @@ onMounted(async () => {
         </div>
         <div class="menu-safety-row">
           <div>
-            <b>自动生成菜单</b
-            ><span>迁移期固定关闭，避免旧模板路由写入 Vben 菜单树</span>
+            <b>菜单接入</b
+            ><span>生成页面后到菜单管理新增路由，组件填写“页面目录/实体名/index”</span>
           </div>
           <Switch :checked="false" disabled />
         </div>
@@ -1314,25 +1309,29 @@ onMounted(async () => {
     >
       <Alert
         v-if="!canRunGeneration"
-        message="当前生成方式包含旧版前端模板，已被安全策略阻止"
-        description="请先编辑配置，将生成方式改为“下载压缩包（后端）”或“生成到本项目（后端）”。"
+        message="当前记录仍使用旧 Element Plus 生成方式"
+        description="请先编辑配置，改为明确标注 Vben 的生成方式，或选择仅 .NET 后端。"
         show-icon
         type="warning"
       />
       <Alert
         v-else
         :message="
-          currentRecord?.generateType === '221'
-            ? '代码将写入后台项目目录'
-            : '将生成只包含后台代码的 ZIP 压缩包'
+          SOURCE_GENERATE_TYPES.has(currentRecord?.generateType || '')
+            ? '代码将写入受控源码目录'
+            : '将生成可下载的代码 ZIP 压缩包'
         "
         :description="
-          currentRecord?.generateType === '221'
-            ? '后台会拒绝覆盖已经存在的同名文件。完成后请立即检查 Git 变更并编译，自动菜单生成已关闭。'
-            : '压缩包只写入服务端临时下载目录，不修改源码和菜单。'
+          SOURCE_GENERATE_TYPES.has(currentRecord?.generateType || '')
+            ? '后台会校验 .NET 与 Vben 根目录，并在任一同名文件存在时整次拒绝，不会覆盖旧版 Web 或现有源码。'
+            : '压缩包在服务端临时目录生成，完成后清理中间文件，不修改源码、菜单和业务数据。'
         "
         show-icon
-        :type="currentRecord?.generateType === '221' ? 'error' : 'info'"
+        :type="
+          SOURCE_GENERATE_TYPES.has(currentRecord?.generateType || '')
+            ? 'error'
+            : 'info'
+        "
       />
       <label class="confirmation-field">
         <span

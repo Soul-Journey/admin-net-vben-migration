@@ -1,0 +1,665 @@
+<script setup lang="ts">
+import type { FormInstance, TableColumnsType, TableProps } from 'ant-design-vue';
+
+import type * as BusinessTypes from '#/api/@(Model.PagePath)/@(Model.LowerClassName)';
+
+import { computed, onMounted, reactive, ref } from 'vue';
+
+import { useAccess } from '@@vben/access';
+import { IconifyIcon } from '@@vben/icons';
+
+import {
+  Button,
+  DatePicker,
+  Form,
+  Input,
+  InputNumber,
+  message,
+  Modal,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  TreeSelect,
+@if (Model.UploadFieldList.Count > 0) {
+  @:Upload,
+}
+} from 'ant-design-vue';
+import dayjs from 'dayjs';
+
+import { getDictDataByCodeApi } from '#/api/system/dict';
+import * as businessApi from '#/api/@(Model.PagePath)/@(Model.LowerClassName)';
+import { ADMIN_PAGINATION_PROPS } from '#/utils/pagination';
+
+defineOptions({ name: 'Generated@(Model.ClassName)Management' });
+
+type BusinessPrimaryKey = BusinessTypes.@(Model.ClassName)PrimaryKey;
+type BusinessRecord = BusinessTypes.@(Model.ClassName)Record;
+type BusinessSaveParams = BusinessTypes.Save@(Model.ClassName)Params;
+type BusinessSelectOption = BusinessTypes.GeneratedSelectOption;
+
+type FieldValue =
+  | (number | string)[]
+  | boolean
+  | null
+  | number
+  | string
+  | undefined;
+
+interface ValueMap {
+  [key: string]: FieldValue;
+}
+
+interface FieldDefinition {
+  dictCode?: string;
+  effectType: string;
+  extendedKey?: string;
+  key: string;
+  label: string;
+  query: boolean;
+  queryKey: string;
+  queryType?: string;
+  required: boolean;
+  table: boolean;
+}
+
+const { hasAccessByCodes } = useAccess();
+const loading = ref(false);
+const submitLoading = ref(false);
+const modalOpen = ref(false);
+const editing = ref(false);
+const formRef = ref<FormInstance>();
+const records = ref<BusinessRecord[]>([]);
+const selectedRows = ref<BusinessRecord[]>([]);
+const total = ref(0);
+const query = reactive<ValueMap>({ page: 1, pageSize: 50 });
+const formState = reactive<ValueMap>({});
+const selectorOptions = reactive<Record<string, BusinessSelectOption[]>>({});
+
+const primaryKeys = [
+@foreach (var column in Model.PrimaryKeyFieldList) {
+  @:  @(Model.TypeScriptString(column.LowerPropertyName)),
+}
+];
+
+const fieldDefinitions: FieldDefinition[] = [
+@foreach (var column in Model.TableField) {
+  var queryKey = column.NetType?.TrimEnd('?') == "DateTime" && column.QueryType == "~" ? column.LowerPropertyName + "Range" : column.LowerPropertyName;
+  @:  {
+  @:    dictCode: @(Model.TypeScriptString(column.DictTypeCode)),
+  @:    effectType: @(Model.TypeScriptString(column.EffectType)),
+  @:    extendedKey: @(Model.TypeScriptString(column.LowerExtendedPropertyName)),
+  @:    key: @(Model.TypeScriptString(column.LowerPropertyName)),
+  @:    label: @(Model.TypeScriptString(column.ColumnComment)),
+  @:    query: @(column.WhetherQuery == "Y" ? "true" : "false"),
+  @:    queryKey: @(Model.TypeScriptString(queryKey)),
+  @:    queryType: @(Model.TypeScriptString(column.QueryType)),
+  @:    required: @(column.WhetherRequired == "Y" ? "true" : "false"),
+  @:    table: @(column.WhetherTable == "Y" ? "true" : "false"),
+  @:  },
+}
+];
+
+const editableFieldKeys = new Set<string>([
+@foreach (var column in Model.AddUpdateFieldList.OrderBy(column => column.LowerPropertyName)) {
+  @:  @(Model.TypeScriptString(column.LowerPropertyName)),
+}
+]);
+
+const queryFields = computed(() => fieldDefinitions.filter((field) => field.query));
+const editFields = computed(() =>
+  fieldDefinitions.filter((field) => editableFieldKeys.has(field.key)),
+);
+const tableColumns = computed<TableColumnsType<BusinessRecord>>(() => [
+  { key: 'index', title: '序号', width: 58 },
+  ...fieldDefinitions
+    .filter((field) => field.table)
+    .map((field) => ({
+      dataIndex: field.key,
+      ellipsis: true,
+      key: field.key,
+      title: field.label,
+      width: field.effectType === 'InputTextArea' ? 220 : 150,
+    })),
+  { fixed: 'right', key: 'actions', title: '操作', width: 130 },
+]);
+const modalTitle = computed(() => (editing.value ? '编辑@(Model.BusName)' : '新增@(Model.BusName)'));
+
+function can(action: string) {
+  return hasAccessByCodes([`@(Model.LowerClassName):${action}`]);
+}
+
+function valueOf(source: object, key: string) {
+  return (source as Record<string, unknown>)[key];
+}
+
+function setValue(target: ValueMap, key: string, value: unknown) {
+  target[key] = value as FieldValue;
+}
+
+function clearValues(target: ValueMap) {
+  Object.keys(target).forEach((key) => delete target[key]);
+}
+
+function primaryKeyPayload(record: BusinessRecord) {
+  return Object.fromEntries(
+    primaryKeys.map((key) => [key, valueOf(record, key)]),
+  ) as BusinessPrimaryKey;
+}
+
+function rowKey(record: BusinessRecord) {
+  return JSON.stringify(primaryKeyPayload(record));
+}
+
+function displayValue(record: BusinessRecord, field: FieldDefinition) {
+  const extended = field.extendedKey ? valueOf(record, field.extendedKey) : undefined;
+  const value = extended ?? valueOf(record, field.key);
+  if (value === undefined || value === null || value === '') return '-';
+  if (typeof value === 'boolean') return value ? '启用' : '禁用';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function dateValue(value: FieldValue) {
+  return typeof value === 'string' && value ? dayjs(value) : undefined;
+}
+
+function dateRangeValue(value: FieldValue) {
+  return Array.isArray(value) && value.length === 2
+    ? ([dayjs(value[0]), dayjs(value[1])] as [
+        ReturnType<typeof dayjs>,
+        ReturnType<typeof dayjs>,
+      ])
+    : undefined;
+}
+
+function selectValue(value: FieldValue) {
+  return value === null || typeof value === 'boolean' ? undefined : value;
+}
+
+async function loadRecords() {
+  loading.value = true;
+  try {
+    const data = await businessApi.page@(Model.ClassName)Api({ ...query });
+    records.value = data.items ?? [];
+    total.value = data.total ?? 0;
+    selectedRows.value = [];
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function handleQuery() {
+  query.page = 1;
+  await loadRecords();
+}
+
+async function resetQuery() {
+  clearValues(query);
+  query.page = 1;
+  query.pageSize = 50;
+  await loadRecords();
+}
+
+function openCreate() {
+  editing.value = false;
+  clearValues(formState);
+  for (const field of editFields.value) {
+    if (field.effectType === 'Switch') formState[field.key] = false;
+  }
+  modalOpen.value = true;
+  requestAnimationFrame(() => formRef.value?.clearValidate());
+}
+
+async function openEdit(record: BusinessRecord) {
+  editing.value = true;
+  clearValues(formState);
+  const detail = await businessApi.detail@(Model.ClassName)Api(primaryKeyPayload(record));
+  Object.assign(formState, detail);
+  modalOpen.value = true;
+  requestAnimationFrame(() => formRef.value?.clearValidate());
+}
+
+async function submitForm() {
+  await formRef.value?.validate();
+  submitLoading.value = true;
+  try {
+    const payload = { ...formState } as BusinessSaveParams;
+    await (editing.value
+      ? businessApi.update@(Model.ClassName)Api(payload)
+      : businessApi.add@(Model.ClassName)Api(payload));
+    message.success(editing.value ? '@(Model.BusName)已更新' : '@(Model.BusName)已新增');
+    modalOpen.value = false;
+    await loadRecords();
+  } finally {
+    submitLoading.value = false;
+  }
+}
+
+function removeRecord(record: BusinessRecord) {
+  Modal.confirm({
+    content: '删除后无法恢复，确定继续吗？',
+    okButtonProps: { danger: true },
+    okText: '删除',
+    title: '删除@(Model.BusName)',
+    async onOk() {
+      await businessApi.delete@(Model.ClassName)Api(primaryKeyPayload(record));
+      message.success('删除成功');
+      await loadRecords();
+    },
+  });
+}
+
+function batchRemove() {
+  if (selectedRows.value.length === 0) return;
+  Modal.confirm({
+    content: `将删除选中的 ${selectedRows.value.length} 条记录，确定继续吗？`,
+    okButtonProps: { danger: true },
+    okText: '批量删除',
+    title: '批量删除@(Model.BusName)',
+    async onOk() {
+      await businessApi.batchDelete@(Model.ClassName)Api(
+        selectedRows.value.map((record) => primaryKeyPayload(record)),
+      );
+      message.success('批量删除成功');
+      await loadRecords();
+    },
+  });
+}
+@if (Model.HasSetStatus) {
+@:
+@:async function changeStatus(record: BusinessRecord, checked: boolean) {
+@:  await businessApi.set@(Model.ClassName)StatusApi({
+@:    ...primaryKeyPayload(record),
+@:    status: checked ? 1 : 2,
+@:  });
+@:  message.success('状态已更新');
+@:  await loadRecords();
+@:}
+}
+
+async function loadOptions() {
+  const dictFields = fieldDefinitions.filter(
+    (field) =>
+      ['DictSelector', 'EnumSelector'].includes(field.effectType) &&
+      field.dictCode,
+  );
+  await Promise.all(
+    dictFields.map(async (field) => {
+      const items = await getDictDataByCodeApi(field.dictCode!, 1);
+      selectorOptions[field.key] = items.map((item) => ({
+        label: item.label,
+        value: item.value,
+      }));
+    }),
+  );
+@if (Model.DropdownFieldList.Count > 0) {
+@:  const dropdown = await businessApi.get@(Model.ClassName)DropdownApi();
+@:  Object.assign(selectorOptions, dropdown);
+}
+}
+@if (Model.UploadFieldList.Count > 0) {
+@:
+@:async function uploadField(field: FieldDefinition, file: File) {
+@:  try {
+@:    switch (field.key) {
+    foreach (var column in Model.UploadFieldList) {
+@:      case @(Model.TypeScriptString(column.LowerPropertyName)): {
+@:        const result = await businessApi.upload@(Model.ClassName)@(column.PropertyName)Api(file);
+@:        formState[field.key] = result.id;
+@:        message.success('@(column.ColumnComment)上传成功');
+@:        break;
+@:      }
+    }
+@:    }
+@:  } catch {
+@:    message.error('上传失败');
+@:  }
+@:  return false;
+@:}
+}
+
+const rowSelection = computed<TableProps['rowSelection']>(() => ({
+  onChange: (_keys, rows) => {
+    selectedRows.value = rows as BusinessRecord[];
+  },
+  selectedRowKeys: selectedRows.value.map((record) => rowKey(record)),
+}));
+
+function handleTableChange(pagination: Parameters<NonNullable<TableProps['onChange']>>[0]) {
+  query.page = pagination.current ?? 1;
+  query.pageSize = pagination.pageSize ?? 50;
+  void loadRecords();
+}
+
+onMounted(async () => {
+  await Promise.all([loadOptions(), loadRecords()]);
+});
+</script>
+
+<template>
+  <div class="generated-page">
+    <section class="generated-panel">
+      <header class="page-heading">
+        <div>
+          <h2>@(Model.BusName)</h2>
+          <p>维护@(Model.BusName)数据</p>
+        </div>
+        <Space>
+          <Button
+            v-if="selectedRows.length > 0 && can('batchDelete')"
+            danger
+            @@click="batchRemove"
+          >
+            批量删除
+          </Button>
+          <Button v-if="can('add')" type="primary" @@click="openCreate">
+            <template #icon><IconifyIcon icon="lucide:plus" /></template>
+            新增
+          </Button>
+        </Space>
+      </header>
+
+      <div v-if="queryFields.length > 0" class="query-grid">
+        <label v-for="field in queryFields" :key="field.queryKey" class="query-field">
+          <span>{{ field.label }}</span>
+          <InputNumber
+            v-if="field.effectType === 'InputNumber'"
+            :value="query[field.queryKey] as number"
+            placeholder="请输入"
+            @@update:value="setValue(query, field.queryKey, $event)"
+          />
+          <DatePicker.RangePicker
+            v-else-if="field.queryType === '~'"
+            :value="dateRangeValue(query[field.queryKey])"
+            @@change="(_dates, value) => setValue(query, field.queryKey, value)"
+          />
+          <DatePicker
+            v-else-if="field.effectType === 'DatePicker'"
+            :value="dateValue(query[field.queryKey])"
+            @@change="(_date, value) => setValue(query, field.queryKey, value)"
+          />
+          <Select
+            v-else-if="
+              ['DictSelector', 'EnumSelector', 'ForeignKey'].includes(
+                field.effectType,
+              )
+            "
+            :options="selectorOptions[field.key] || []"
+            :value="selectValue(query[field.queryKey])"
+            allow-clear
+            show-search
+            @@update:value="setValue(query, field.queryKey, $event)"
+          />
+          <TreeSelect
+            v-else-if="field.effectType === 'ApiTreeSelector'"
+            :tree-data="selectorOptions[field.key] || []"
+            :value="selectValue(query[field.queryKey])"
+            allow-clear
+            show-search
+            tree-default-expand-all
+            tree-node-filter-prop="label"
+            @@update:value="setValue(query, field.queryKey, $event)"
+          />
+          <Input
+            v-else
+            :value="query[field.queryKey] as string"
+            allow-clear
+            placeholder="请输入"
+            @@update:value="setValue(query, field.queryKey, $event)"
+          />
+        </label>
+        <Space class="query-actions">
+          <Button v-if="can('page')" type="primary" @@click="handleQuery">
+            <template #icon><IconifyIcon icon="lucide:search" /></template>
+            查询
+          </Button>
+          <Button @@click="resetQuery">
+            <template #icon><IconifyIcon icon="lucide:rotate-ccw" /></template>
+            重置
+          </Button>
+        </Space>
+      </div>
+
+      <Table
+        :columns="tableColumns"
+        :data-source="records"
+        :loading="loading"
+        :pagination="{
+          ...ADMIN_PAGINATION_PROPS,
+          current: Number(query.page),
+          pageSize: Number(query.pageSize),
+          total,
+        }"
+        :row-key="rowKey"
+        :row-selection="rowSelection"
+        :scroll="{ x: 'max-content' }"
+        size="small"
+        @@change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record, index }">
+          <template v-if="column.key === 'index'">
+            {{ (Number(query.page) - 1) * Number(query.pageSize) + index + 1 }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4">
+              <Button v-if="can('update')" size="small" type="link" @@click="openEdit(record)">
+                编辑
+              </Button>
+              <Button
+                v-if="can('delete')"
+                danger
+                size="small"
+                type="link"
+                @@click="removeRecord(record)"
+              >
+                删除
+              </Button>
+            </Space>
+          </template>
+          <template v-else>
+            <template
+              v-for="field in fieldDefinitions.filter((item) => item.key === column.key)"
+              :key="field.key"
+            >
+@if (Model.HasSetStatus) {
+              @:<Switch
+              @:  v-if="field.key === 'status' && can('setStatus')"
+              @:  :checked="Number(valueOf(record, field.key)) === 1"
+              @:  size="small"
+              @:  @@change="changeStatus(record, Boolean($event))"
+              @:/>
+}
+              <Tag v-else-if="field.effectType === 'Switch'">
+                {{ displayValue(record, field) }}
+              </Tag>
+              <span v-else>{{ displayValue(record, field) }}</span>
+            </template>
+          </template>
+        </template>
+      </Table>
+    </section>
+
+    <Modal
+      v-model:open="modalOpen"
+      :confirm-loading="submitLoading"
+      :title="modalTitle"
+      width="760px"
+      @@ok="submitForm"
+    >
+      <Form ref="formRef" :model="formState" layout="vertical">
+        <div class="form-grid">
+          <Form.Item
+            v-for="field in editFields"
+            :key="field.key"
+            :class="{ 'span-two': field.effectType === 'InputTextArea' }"
+            :label="field.label"
+            :name="field.key"
+            :rules="[{ required: field.required, message: `请填写${field.label}` }]"
+          >
+            <Input.TextArea
+              v-if="field.effectType === 'InputTextArea'"
+              :auto-size="{ minRows: 3, maxRows: 6 }"
+              :value="formState[field.key] as string"
+              @@update:value="setValue(formState, field.key, $event)"
+            />
+            <InputNumber
+              v-else-if="field.effectType === 'InputNumber'"
+              :value="formState[field.key] as number"
+              @@update:value="setValue(formState, field.key, $event)"
+            />
+            <DatePicker
+              v-else-if="field.effectType === 'DatePicker'"
+              :value="dateValue(formState[field.key])"
+              show-time
+              @@change="(_date, value) => setValue(formState, field.key, value)"
+            />
+            <Switch
+              v-else-if="field.effectType === 'Switch'"
+              :checked="Boolean(formState[field.key])"
+              @@change="setValue(formState, field.key, $event)"
+            />
+            <Select
+              v-else-if="
+                ['DictSelector', 'EnumSelector', 'ForeignKey'].includes(
+                  field.effectType,
+                )
+              "
+              :options="selectorOptions[field.key] || []"
+              :value="selectValue(formState[field.key])"
+              allow-clear
+              show-search
+              @@update:value="setValue(formState, field.key, $event)"
+            />
+            <TreeSelect
+              v-else-if="field.effectType === 'ApiTreeSelector'"
+              :tree-data="selectorOptions[field.key] || []"
+              :value="selectValue(formState[field.key])"
+              allow-clear
+              show-search
+              tree-default-expand-all
+              tree-node-filter-prop="label"
+              @@update:value="setValue(formState, field.key, $event)"
+            />
+@if (Model.UploadFieldList.Count > 0) {
+            @:<div v-else-if="field.effectType === 'Upload'" class="upload-field">
+            @:  <Upload
+            @:    :before-upload="(file) => uploadField(field, file)"
+            @:    :show-upload-list="false"
+            @:  >
+            @:    <Button><IconifyIcon icon="lucide:upload" /> 选择文件</Button>
+            @:  </Upload>
+            @:  <span>{{ formState[field.key] || '尚未上传' }}</span>
+            @:</div>
+}
+            <Input
+              v-else
+              :value="formState[field.key] as string"
+              @@update:value="setValue(formState, field.key, $event)"
+            />
+          </Form.Item>
+        </div>
+      </Form>
+    </Modal>
+  </div>
+</template>
+
+<style scoped>
+.generated-page {
+  min-height: 100%;
+  padding: 12px;
+}
+
+.generated-panel {
+  min-height: calc(100vh - 122px);
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.page-heading {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 18px 12px;
+}
+
+.page-heading h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  color: #111827;
+}
+
+.page-heading p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.query-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 240px));
+  gap: 10px 12px;
+  align-items: end;
+  padding: 12px 18px;
+  border-top: 1px solid #eef0f3;
+  border-bottom: 1px solid #eef0f3;
+}
+
+.query-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  font-size: 13px;
+  color: #374151;
+}
+
+.query-field :deep(.ant-input-number),
+.query-field :deep(.ant-picker),
+.query-field :deep(.ant-select) {
+  width: 100%;
+}
+
+.query-actions {
+  min-height: 32px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.form-grid :deep(.ant-input-number),
+.form-grid :deep(.ant-picker),
+.form-grid :deep(.ant-select) {
+  width: 100%;
+}
+
+.span-two {
+  grid-column: 1 / -1;
+}
+
+.upload-field {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: #6b7280;
+}
+
+@@media (max-width: 720px) {
+  .page-heading,
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .span-two {
+    grid-column: auto;
+  }
+}
+</style>

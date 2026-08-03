@@ -32,6 +32,11 @@ public sealed class CodeGenOptions : IConfigurableOptions
     public string FrontRootPath { get; set; }
 
     /// <summary>
+    /// Vben 前端文件根目录
+    /// </summary>
+    public string VbenRootPath { get; set; }
+
+    /// <summary>
     /// 后端生成到的项目
     /// </summary>
     public List<string> BackendApplicationNamespaces { get; set; }

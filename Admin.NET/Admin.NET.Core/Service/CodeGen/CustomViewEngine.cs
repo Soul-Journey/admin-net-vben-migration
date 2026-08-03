@@ -11,6 +11,11 @@ namespace Admin.NET.Core.Service;
 /// </summary>
 public class CustomViewEngine : ViewEngineModel
 {
+    private static readonly HashSet<string> TypeScriptNumberTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "byte", "sbyte", "short", "ushort", "int", "uint", "long", "ulong", "float", "double", "decimal"
+    };
+
     /// <summary>
     /// 库定位器
     /// </summary>
@@ -63,6 +68,32 @@ public class CustomViewEngine : ViewEngineModel
     public List<CodeGenConfig> PrimaryKeyFieldList { get; set; }
 
     public List<TableUniqueConfigItem> TableUniqueConfigList { get; set; }
+
+    /// <summary>
+    /// 生成可直接放入 TypeScript 源码的安全字符串字面量
+    /// </summary>
+    public string TypeScriptString(string value) => System.Text.Json.JsonSerializer.Serialize(value ?? string.Empty);
+
+    /// <summary>
+    /// 将 .NET 字段类型映射为 Vben 页面使用的 TypeScript 类型
+    /// </summary>
+    public string TypeScriptType(string netType)
+    {
+        var value = (netType ?? string.Empty).Trim().TrimEnd('?');
+        if (value.EndsWith("Enum", StringComparison.Ordinal)) return "number";
+        if (TypeScriptNumberTypes.Contains(value)) return "number";
+        if (value.Equals("bool", StringComparison.OrdinalIgnoreCase) || value.Equals("boolean", StringComparison.OrdinalIgnoreCase)) return "boolean";
+        return "string";
+    }
+
+    /// <summary>
+    /// 生成符合项目排序规范的可空 TypeScript 联合类型
+    /// </summary>
+    public string NullableTypeScriptType(string netType)
+    {
+        var type = TypeScriptType(netType);
+        return type == "boolean" ? "boolean | null" : $"null | {type}";
+    }
 
     public List<CodeGenConfig> IgnoreUpdateFieldList => TableField.Where(u => u.WhetherAddUpdate == "N" && u.ColumnKey != "True" && u.WhetherCommon != "Y").ToList();
 

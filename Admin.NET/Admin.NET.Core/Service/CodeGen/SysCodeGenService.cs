@@ -15,7 +15,14 @@ namespace Admin.NET.Core.Service;
 public class SysCodeGenService : IDynamicApiController, ITransient
 {
     private const string MaskedConnectionString = "数据库连接已由服务端安全托管";
-    private static readonly HashSet<string> SupportedGenerateTypes = new(StringComparer.Ordinal) { "100", "111", "121", "200", "211", "221" };
+    private static readonly HashSet<string> SupportedGenerateTypes = new(StringComparer.Ordinal)
+    {
+        "100", "102", "111", "112", "121", "200", "202", "211", "212", "221"
+    };
+    private static readonly HashSet<string> VbenGenerateTypes = new(StringComparer.Ordinal) { "102", "112", "202", "212" };
+    private static readonly HashSet<string> VbenFrontendOnlyGenerateTypes = new(StringComparer.Ordinal) { "112", "212" };
+    private static readonly HashSet<string> BackendOnlyGenerateTypes = new(StringComparer.Ordinal) { "121", "221" };
+    private static readonly HashSet<string> LegacyFrontendGenerateTypes = new(StringComparer.Ordinal) { "100", "111", "200", "211" };
     private static readonly Regex IdentifierRegex = new("^[A-Za-z_][A-Za-z0-9_]{0,127}$", RegexOptions.Compiled);
     private static readonly Regex PagePathRegex = new("^[A-Za-z][A-Za-z0-9/_-]{0,31}$", RegexOptions.Compiled);
     private static readonly SemaphoreSlim CodeGenWriteLock = new(1, 1);
@@ -399,6 +406,24 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     }
 
     /// <summary>
+    /// 获取当前项目允许使用的代码生成方式
+    /// </summary>
+    [DisplayName("获取代码生成方式")]
+    public List<CodeGenGenerateTypeOutput> GetGenerateTypeList()
+    {
+        EnsureSuperAdmin();
+        return new()
+        {
+            new() { Value = "102", Label = "下载 ZIP（Vben 前端 + .NET 后端）", IncludesFrontend = true, IncludesBackend = true },
+            new() { Value = "112", Label = "下载 ZIP（仅 Vben 前端）", IncludesFrontend = true },
+            new() { Value = "121", Label = "下载 ZIP（仅 .NET 后端）", IncludesBackend = true },
+            new() { Value = "202", Label = "写入项目（Vben 前端 + .NET 后端）", IncludesFrontend = true, IncludesBackend = true, WritesSource = true },
+            new() { Value = "212", Label = "写入项目（仅 Vben 前端）", IncludesFrontend = true, WritesSource = true },
+            new() { Value = "221", Label = "写入项目（仅 .NET 后端）", IncludesBackend = true, WritesSource = true }
+        };
+    }
+
+    /// <summary>
     /// 从数据库实体重新同步字段配置
     /// </summary>
     [ApiDescriptionSettings(Name = "Sync"), HttpPost]
@@ -452,37 +477,104 @@ public class SysCodeGenService : IDynamicApiController, ITransient
             else
             {
                 targetPathList = GetTargetPathList(input);
-                var projectRoot = new DirectoryInfo(App.WebHostEnvironment.ContentRootPath).Parent!.FullName;
-                var backendRoot = Path.Combine(projectRoot, input.NameSpace!);
-                targetPathList = targetPathList.Select(path => EnsurePathWithin(backendRoot, path)).ToList();
-                var existingFiles = targetPathList.Where(File.Exists).Select(Path.GetFileName).ToList();
+                var allowedRoots = GetAllowedLocalRoots(input);
+                targetPathList = targetPathList.Select(path => EnsurePathWithinAny(allowedRoots, path)).ToList();
+                var existingFiles = targetPathList.Where(File.Exists).Select(path => Path.GetRelativePath(GetRepositoryRoot(), path)).ToList();
                 if (existingFiles.Count > 0)
-                    throw Oops.Oh($"目标目录已存在文件：{string.Join("、", existingFiles)}。为防止覆盖源码，本次未生成");
+                    throw Oops.Oh($"目标目录已存在文件：{string.Join("、", existingFiles)}。为防止覆盖源码，本次未写入任何文件");
             }
 
             var (_, result) = await RenderTemplateAsync(input);
             var templatePathList = GetTemplatePathList(input);
-            for (var i = 0; i < templatePathList.Count; i++)
+            var generatedFiles = templatePathList
+                .Select((templatePath, index) => (
+                    TargetPath: targetPathList[index],
+                    Content: result.GetValueOrDefault(Path.GetFileNameWithoutExtension(templatePath))))
+                .Where(file => !string.IsNullOrWhiteSpace(file.Content))
+                .Select(file => (file.TargetPath, file.Content!))
+                .ToList();
+
+            if (!input.GenerateType.StartsWith('1'))
             {
-                var content = result.GetValueOrDefault(templatePathList[i]?.TrimEnd(".vm"));
-                if (string.IsNullOrWhiteSpace(content)) continue;
-                var dirPath = new DirectoryInfo(targetPathList[i]).Parent!.FullName;
-                if (!Directory.Exists(dirPath)) Directory.CreateDirectory(dirPath);
-                await File.WriteAllTextAsync(targetPathList[i], content, Encoding.UTF8);
+                await WriteGeneratedFilesAtomicallyAsync(generatedFiles);
+                return null;
             }
 
-            // Vben 模板完成前不自动改写菜单，避免旧 Element Plus 路由污染现有菜单树。
-
-            if (!input.GenerateType.StartsWith('1')) return null;
-
             var downloadPath = EnsurePathWithin(zipRoot, zipPath + ".zip");
-            if (File.Exists(downloadPath)) File.Delete(downloadPath);
-            ZipFile.CreateFromDirectory(zipPath, downloadPath);
-            return new { url = $"{App.HttpContext.Request.Scheme}://{App.HttpContext.Request.Host.Value}/codeGen/{input.TableName}.zip" };
+            var temporaryDownloadPath = EnsurePathWithin(
+                zipRoot,
+                downloadPath + $".{Guid.NewGuid():N}.tmp");
+            try
+            {
+                await WriteGeneratedFilesAsync(generatedFiles);
+                ZipFile.CreateFromDirectory(zipPath, temporaryDownloadPath);
+                File.Move(temporaryDownloadPath, downloadPath, true);
+                return new { url = $"{App.HttpContext.Request.Scheme}://{App.HttpContext.Request.Host.Value}/codeGen/{input.TableName}.zip" };
+            }
+            finally
+            {
+                if (File.Exists(temporaryDownloadPath)) File.Delete(temporaryDownloadPath);
+                if (Directory.Exists(zipPath)) Directory.Delete(zipPath, true);
+            }
         }
         finally
         {
             CodeGenWriteLock.Release();
+        }
+    }
+
+    private static async Task WriteGeneratedFilesAsync(IReadOnlyList<(string TargetPath, string Content)> files)
+    {
+        foreach (var file in files)
+        {
+            var directoryPath = new DirectoryInfo(file.TargetPath).Parent!.FullName;
+            if (!Directory.Exists(directoryPath)) Directory.CreateDirectory(directoryPath);
+            await File.WriteAllTextAsync(file.TargetPath, file.Content, Encoding.UTF8);
+        }
+    }
+
+    private static async Task WriteGeneratedFilesAtomicallyAsync(IReadOnlyList<(string TargetPath, string Content)> files)
+    {
+        var pendingFiles = new List<(string TemporaryPath, string TargetPath)>();
+        var committedFiles = new List<string>();
+        var createdDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var file in files)
+            {
+                var directoryPath = new DirectoryInfo(file.TargetPath).Parent!.FullName;
+                var currentDirectory = directoryPath;
+                while (!Directory.Exists(currentDirectory))
+                {
+                    createdDirectories.Add(currentDirectory);
+                    currentDirectory = new DirectoryInfo(currentDirectory).Parent?.FullName
+                        ?? throw Oops.Oh("无法确定代码生成目标目录");
+                }
+
+                Directory.CreateDirectory(directoryPath);
+                var temporaryPath = file.TargetPath + $".codegen-{Guid.NewGuid():N}.tmp";
+                await File.WriteAllTextAsync(temporaryPath, file.Content, Encoding.UTF8);
+                pendingFiles.Add((temporaryPath, file.TargetPath));
+            }
+
+            foreach (var file in pendingFiles)
+            {
+                File.Move(file.TemporaryPath, file.TargetPath, false);
+                committedFiles.Add(file.TargetPath);
+            }
+        }
+        catch
+        {
+            foreach (var file in pendingFiles.Where(file => File.Exists(file.TemporaryPath)))
+                File.Delete(file.TemporaryPath);
+            foreach (var file in committedFiles.Where(File.Exists)) File.Delete(file);
+            foreach (var directory in createdDirectories.OrderByDescending(path => path.Length))
+            {
+                if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any())
+                    Directory.Delete(directory);
+            }
+
+            throw;
         }
     }
 
@@ -541,7 +633,7 @@ public class SysCodeGenService : IDynamicApiController, ITransient
         };
 
         // 获取模板文件并替换
-        var templatePathList = GetTemplatePathList();
+        var templatePathList = GetTemplatePathList(input);
         var templatePath = Path.Combine(App.WebHostEnvironment.WebRootPath, "template");
 
         var result = new Dictionary<string, string>();
@@ -560,7 +652,7 @@ public class SysCodeGenService : IDynamicApiController, ITransient
                 builder.AddUsing("System.Collections.Generic");
                 builder.AddUsing("System.Linq");
             });
-            result.Add(path?.TrimEnd(".vm"), tResult);
+            result.Add(Path.GetFileNameWithoutExtension(path), tResult);
         }
         return (tableFieldList, result);
     }
@@ -634,17 +726,34 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     private static void EnsureGenerationModeIsSafe(SysCodeGen input)
     {
         if (!SupportedGenerateTypes.Contains(input.GenerateType ?? "")) throw Oops.Oh("生成方式无效");
-        if (input.GenerateType is "100" or "111" or "200" or "211")
-            throw Oops.Oh("当前前端模板仍属于旧 Element Plus Web。为保护只读参考项目，暂不允许生成前端文件；可使用“后端 ZIP”或“后端本地”");
+        if (LegacyFrontendGenerateTypes.Contains(input.GenerateType!))
+            throw Oops.Oh("该方式使用旧 Element Plus 模板，旧版 Web 已永久设为只读。请选择明确标注 Vben 的生成方式");
     }
 
     private static string EnsurePathWithin(string rootPath, string targetPath)
     {
-        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var target = Path.GetFullPath(targetPath);
-        if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        if (!target.Equals(root, StringComparison.OrdinalIgnoreCase) &&
+            !target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw Oops.Oh("生成目标路径超出允许目录");
         return target;
+    }
+
+    private static string EnsurePathWithinAny(IEnumerable<string> rootPaths, string targetPath)
+    {
+        foreach (var rootPath in rootPaths)
+        {
+            try
+            {
+                return EnsurePathWithin(rootPath, targetPath);
+            }
+            catch
+            {
+                // 继续检查下一个受控根目录。
+            }
+        }
+        throw Oops.Oh("生成目标路径超出后端项目和 Vben 项目的允许目录");
     }
 
     private static void MaskConnectionString(SysCodeGen item)
@@ -727,16 +836,14 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     /// <returns></returns>
     private static List<string> GetTemplatePathList(SysCodeGen input)
     {
+        if (VbenFrontendOnlyGenerateTypes.Contains(input.GenerateType!)) return new() { "vben-index.vue.vm", "vben-api.ts.vm" };
+        if (VbenGenerateTypes.Contains(input.GenerateType!))
+            return new() { "Service.cs.vm", "Input.cs.vm", "Output.cs.vm", "Dto.cs.vm", "vben-index.vue.vm", "vben-api.ts.vm" };
+        if (BackendOnlyGenerateTypes.Contains(input.GenerateType!)) return new() { "Service.cs.vm", "Input.cs.vm", "Output.cs.vm", "Dto.cs.vm" };
         if (input.GenerateType!.Substring(1, 1).Contains('1')) return new() { "index.vue.vm", "editDialog.vue.vm", "api.ts.vm" };
         if (input.GenerateType.Substring(1, 1).Contains('2')) return new() { "Service.cs.vm", "Input.cs.vm", "Output.cs.vm", "Dto.cs.vm" };
         return new() { "Service.cs.vm", "Input.cs.vm", "Output.cs.vm", "Dto.cs.vm", "index.vue.vm", "editDialog.vue.vm", "api.ts.vm" };
     }
-
-    /// <summary>
-    /// 获取模板文件路径集合
-    /// </summary>
-    /// <returns></returns>
-    private static List<string> GetTemplatePathList() => new() { "Service.cs.vm", "Input.cs.vm", "Output.cs.vm", "Dto.cs.vm", "index.vue.vm", "editDialog.vue.vm", "api.ts.vm" };
 
     /// <summary>
     /// 设置生成文件路径
@@ -745,16 +852,27 @@ public class SysCodeGenService : IDynamicApiController, ITransient
     /// <returns></returns>
     private List<string> GetTargetPathList(SysCodeGen input)
     {
-        //var backendPath = Path.Combine(new DirectoryInfo(App.WebHostEnvironment.ContentRootPath).Parent.FullName, _codeGenOptions.BackendApplicationNamespace, "Service", input.TableName);
-        var backendPath = Path.Combine(new DirectoryInfo(App.WebHostEnvironment.ContentRootPath).Parent!.FullName, input.NameSpace!, "Service", input.TableName!);
+        var backendPath = Path.Combine(GetBackendRoot(input), "Service", input.TableName!);
         var servicePath = Path.Combine(backendPath, input.TableName + "Service.cs");
         var inputPath = Path.Combine(backendPath, "Dto", input.TableName + "Input.cs");
         var outputPath = Path.Combine(backendPath, "Dto", input.TableName + "Output.cs");
         var viewPath = Path.Combine(backendPath, "Dto", input.TableName + "Dto.cs");
-        var frontendPath = Path.Combine(new DirectoryInfo(App.WebHostEnvironment.ContentRootPath).Parent!.Parent!.FullName, _codeGenOptions.FrontRootPath, "src", "views", input.PagePath!);
-        var indexPath = Path.Combine(frontendPath, input.TableName[..1].ToLower() + input.TableName[1..], "index.vue");//
-        var formModalPath = Path.Combine(frontendPath, input.TableName[..1].ToLower() + input.TableName[1..], "component", "editDialog.vue");
-        var apiJsPath = Path.Combine(new DirectoryInfo(App.WebHostEnvironment.ContentRootPath).Parent!.Parent!.FullName, _codeGenOptions.FrontRootPath, "src", "api", input.PagePath, input.TableName[..1].ToLower() + input.TableName[1..] + ".ts");
+        var firstLowerTableName = input.TableName!.ToFirstLetterLowerCase();
+
+        if (VbenGenerateTypes.Contains(input.GenerateType!))
+        {
+            var vbenRoot = GetVbenRoot();
+            var vbenIndexPath = Path.Combine(vbenRoot, "src", "views", input.PagePath!, firstLowerTableName, "index.vue");
+            var vbenApiPath = Path.Combine(vbenRoot, "src", "api", input.PagePath!, firstLowerTableName + ".ts");
+            if (VbenFrontendOnlyGenerateTypes.Contains(input.GenerateType!)) return new() { vbenIndexPath, vbenApiPath };
+            return new() { servicePath, inputPath, outputPath, viewPath, vbenIndexPath, vbenApiPath };
+        }
+
+        var legacyRoot = Path.Combine(GetRepositoryRoot(), _codeGenOptions.FrontRootPath);
+        var frontendPath = Path.Combine(legacyRoot, "src", "views", input.PagePath!);
+        var indexPath = Path.Combine(frontendPath, firstLowerTableName, "index.vue");
+        var formModalPath = Path.Combine(frontendPath, firstLowerTableName, "component", "editDialog.vue");
+        var apiJsPath = Path.Combine(legacyRoot, "src", "api", input.PagePath, firstLowerTableName + ".ts");
 
         if (input.GenerateType!.Substring(1, 1).Contains('1'))
         {
@@ -801,12 +919,20 @@ public class SysCodeGenService : IDynamicApiController, ITransient
         var zipPath = Path.Combine(App.WebHostEnvironment.WebRootPath, "CodeGen", input.TableName!);
 
         var firstLowerTableName = input.TableName!.ToFirstLetterLowerCase();
-        //var backendPath = Path.Combine(zipPath, _codeGenOptions.BackendApplicationNamespace, "Service", input.TableName);
         var backendPath = Path.Combine(zipPath, input.NameSpace!, "Service", input.TableName);
         var servicePath = Path.Combine(backendPath, input.TableName + "Service.cs");
         var inputPath = Path.Combine(backendPath, "Dto", input.TableName + "Input.cs");
         var outputPath = Path.Combine(backendPath, "Dto", input.TableName + "Output.cs");
         var viewPath = Path.Combine(backendPath, "Dto", input.TableName + "Dto.cs");
+        if (VbenGenerateTypes.Contains(input.GenerateType!))
+        {
+            var vbenRoot = Path.Combine(zipPath, _codeGenOptions.VbenRootPath);
+            var vbenIndexPath = Path.Combine(vbenRoot, "src", "views", input.PagePath!, firstLowerTableName, "index.vue");
+            var vbenApiPath = Path.Combine(vbenRoot, "src", "api", input.PagePath!, firstLowerTableName + ".ts");
+            if (VbenFrontendOnlyGenerateTypes.Contains(input.GenerateType!)) return new() { vbenIndexPath, vbenApiPath };
+            return new() { servicePath, inputPath, outputPath, viewPath, vbenIndexPath, vbenApiPath };
+        }
+
         var frontendPath = Path.Combine(zipPath, _codeGenOptions.FrontRootPath, "src", "views", input.PagePath!);
         var indexPath = Path.Combine(frontendPath, firstLowerTableName, "index.vue");
         var formModalPath = Path.Combine(frontendPath, firstLowerTableName, "component", "editDialog.vue");
@@ -842,5 +968,29 @@ public class SysCodeGenService : IDynamicApiController, ITransient
             formModalPath,
             apiJsPath
         };
+    }
+
+    private string GetRepositoryRoot() => new DirectoryInfo(App.WebHostEnvironment.ContentRootPath).Parent!.Parent!.FullName;
+
+    private string GetBackendRoot(SysCodeGen input) => Path.Combine(
+        new DirectoryInfo(App.WebHostEnvironment.ContentRootPath).Parent!.FullName,
+        input.NameSpace!);
+
+    private string GetVbenRoot()
+    {
+        if (string.IsNullOrWhiteSpace(_codeGenOptions.VbenRootPath)) throw Oops.Oh("VbenRootPath 未配置");
+        var vbenRoot = EnsurePathWithin(GetRepositoryRoot(), Path.Combine(GetRepositoryRoot(), _codeGenOptions.VbenRootPath));
+        var legacyRoot = Path.GetFullPath(Path.Combine(GetRepositoryRoot(), _codeGenOptions.FrontRootPath ?? "Web"));
+        if (Path.GetFullPath(vbenRoot).Equals(legacyRoot, StringComparison.OrdinalIgnoreCase))
+            throw Oops.Oh("VbenRootPath 不能指向旧版 Web 目录");
+        return vbenRoot;
+    }
+
+    private List<string> GetAllowedLocalRoots(SysCodeGen input)
+    {
+        var roots = new List<string>();
+        if (!VbenFrontendOnlyGenerateTypes.Contains(input.GenerateType!)) roots.Add(GetBackendRoot(input));
+        if (VbenGenerateTypes.Contains(input.GenerateType!)) roots.Add(GetVbenRoot());
+        return roots;
     }
 }

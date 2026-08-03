@@ -81,3 +81,34 @@ public class CodeGenOutput
     /// </summary>
     public string PrintName { get; set; }
 }
+
+/// <summary>
+/// 代码生成方式
+/// </summary>
+public sealed class CodeGenGenerateTypeOutput
+{
+    /// <summary>
+    /// 生成方式编码
+    /// </summary>
+    public string Value { get; init; }
+
+    /// <summary>
+    /// 显示名称
+    /// </summary>
+    public string Label { get; init; }
+
+    /// <summary>
+    /// 是否包含 Vben 前端
+    /// </summary>
+    public bool IncludesFrontend { get; init; }
+
+    /// <summary>
+    /// 是否包含 .NET 后端
+    /// </summary>
+    public bool IncludesBackend { get; init; }
+
+    /// <summary>
+    /// 是否直接写入源码目录
+    /// </summary>
+    public bool WritesSource { get; init; }
+}

@@ -8,6 +8,14 @@ export interface CodeGenDatabaseRecord {
   dbType: number | string;
 }
 
+export interface CodeGenGenerateTypeRecord {
+  includesBackend: boolean;
+  includesFrontend: boolean;
+  label: string;
+  value: string;
+  writesSource: boolean;
+}
+
 export interface CodeGenTableRecord {
   configId?: string;
   entityName: string;
@@ -147,6 +155,12 @@ export function listCodeGenColumnsApi(tableName: string, configId: string) {
 
 export function listCodeGenNamespacesApi() {
   return requestClient.get<string[]>('/sysCodeGen/applicationNamespaces');
+}
+
+export function listCodeGenGenerateTypesApi() {
+  return requestClient.get<CodeGenGenerateTypeRecord[]>(
+    '/sysCodeGen/generateTypeList',
+  );
 }
 
 export function listCodeGenFieldConfigsApi(codeGenId: number) {

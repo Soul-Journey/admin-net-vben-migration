@@ -1,0 +1,84 @@
+import { requestClient } from '#/api/request';
+
+export interface GeneratedPagedList<T> {
+  items: T[];
+  page?: number;
+  pageSize?: number;
+  total: number;
+  totalPages?: number;
+}
+
+/** @(Model.BusName)记录 */
+export interface @(Model.ClassName)Record {
+@foreach (var column in Model.TableField) {
+  @:@(column.LowerPropertyName)?: @(Model.NullableTypeScriptType(column.NetType));
+  if (column.EffectType is "ForeignKey" or "ApiTreeSelector") {
+  @:@(column.LowerExtendedPropertyName)?: string | null;
+  } else if (column.EffectType == "Upload") {
+  @:@(column.LowerExtendedPropertyName)?: Record<string, unknown> | null;
+  }
+}
+}
+
+export type Save@(Model.ClassName)Params = Partial<@(Model.ClassName)Record>;
+export type @(Model.ClassName)PrimaryKey = Record<string, unknown>;
+
+export interface GeneratedSelectOption {
+  children?: GeneratedSelectOption[];
+  label: string;
+  value: number | string;
+}
+
+const baseUrl = '/@(Model.LowerClassName)';
+
+export function page@(Model.ClassName)Api(params: Record<string, unknown>) {
+  return requestClient.post<GeneratedPagedList<@(Model.ClassName)Record>>(
+    `${baseUrl}/page`,
+    params,
+  );
+}
+
+export function detail@(Model.ClassName)Api(params: @(Model.ClassName)PrimaryKey) {
+  return requestClient.get<@(Model.ClassName)Record>(`${baseUrl}/detail`, {
+    params,
+  });
+}
+
+export function add@(Model.ClassName)Api(params: Save@(Model.ClassName)Params) {
+  return requestClient.post<number>(`${baseUrl}/add`, params);
+}
+
+export function update@(Model.ClassName)Api(params: Save@(Model.ClassName)Params) {
+  return requestClient.post<unknown>(`${baseUrl}/update`, params);
+}
+
+export function delete@(Model.ClassName)Api(params: @(Model.ClassName)PrimaryKey) {
+  return requestClient.post<unknown>(`${baseUrl}/delete`, params);
+}
+
+export function batchDelete@(Model.ClassName)Api(params: @(Model.ClassName)PrimaryKey[]) {
+  return requestClient.post<number>(`${baseUrl}/batchDelete`, params);
+}
+@if (Model.HasSetStatus) {
+@:
+@:export function set@(Model.ClassName)StatusApi(params: Save@(Model.ClassName)Params) {
+@:  return requestClient.post<unknown>(`${baseUrl}/setStatus`, params);
+@:}
+}
+@if (Model.DropdownFieldList.Count > 0) {
+@:
+@:export function get@(Model.ClassName)DropdownApi(fromPage = false) {
+@:  return requestClient.post<Record<string, GeneratedSelectOption[]>>(
+@:    `${baseUrl}/dropdownData`,
+@:    { fromPage },
+@:  );
+@:}
+}
+@foreach (var column in Model.UploadFieldList) {
+@:
+@:export function upload@(Model.ClassName)@(column.PropertyName)Api(file: File) {
+@:  const formData = new FormData();
+@:  formData.append('file', file);
+@:  return requestClient.post<{ id: number }>(`${baseUrl}/upload@(column.PropertyName)`, formData);
+@:}
+}

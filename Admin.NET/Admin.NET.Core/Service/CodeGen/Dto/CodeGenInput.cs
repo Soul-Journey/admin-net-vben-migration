@@ -183,7 +183,7 @@ public class AddCodeGenInput : CodeGenInput
     /// 生成方式
     /// </summary>
     [Required(ErrorMessage = "生成方式不能为空")]
-    [RegularExpression("^(100|111|121|200|211|221)$", ErrorMessage = "生成方式无效")]
+    [RegularExpression("^(100|102|111|112|121|200|202|211|212|221)$", ErrorMessage = "生成方式无效")]
     public override string GenerateType { get; set; }
 
     [Required(ErrorMessage = "前端目录不能为空")]

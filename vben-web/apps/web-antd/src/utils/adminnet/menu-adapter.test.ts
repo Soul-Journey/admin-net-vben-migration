@@ -138,6 +138,24 @@ describe('mapAdminNetMenusToVbenRoutes', () => {
     expect(route?.path).toBe('/system/unknown');
   });
 
+  it('allows a generated component only when the file exists in the local Vben page map', () => {
+    const [route] = mapAdminNetMenusToVbenRoutes(
+      [
+        {
+          component: '/business/customer/index',
+          id: 30,
+          meta: { title: '客户管理' },
+          name: 'customer',
+          path: '/business/customer',
+          type: 2,
+        },
+      ],
+      new Set(['business/customer/index']),
+    );
+
+    expect(route?.component).toBe('business/customer/index');
+  });
+
   it('routes the migrated template module to its Vben page', () => {
     const [route] = mapAdminNetMenusToVbenRoutes([
       {

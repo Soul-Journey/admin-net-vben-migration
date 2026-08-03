@@ -145,7 +145,10 @@ function cleanRouteName(item: AdminNetMenuItem, path: string) {
   );
 }
 
-function normalizeComponent(component?: null | string) {
+function normalizeComponent(
+  component?: null | string,
+  localPageComponents?: ReadonlySet<string>,
+) {
   const cleaned = component
     ?.replaceAll(/^\/?src\/views\//g, '')
     .replaceAll(/^\/?views\//g, '')
@@ -157,7 +160,10 @@ function normalizeComponent(component?: null | string) {
     return legacyPlaceholder;
   }
 
-  return ADMIN_NET_COMPONENT_ALLOWLIST[cleaned] ?? legacyPlaceholder;
+  return (
+    ADMIN_NET_COMPONENT_ALLOWLIST[cleaned] ??
+    (localPageComponents?.has(cleaned) ? cleaned : legacyPlaceholder)
+  );
 }
 
 function normalizeIcon(icon: null | string | undefined, path: string) {
@@ -201,21 +207,24 @@ function sortRoutes(routes: RouteRecordStringComponent[]) {
   });
 }
 
-function toRoute(item: AdminNetMenuItem): null | RouteRecordStringComponent {
+function toRoute(
+  item: AdminNetMenuItem,
+  localPageComponents?: ReadonlySet<string>,
+): null | RouteRecordStringComponent {
   if (item.type === MENU_TYPE_BUTTON || item.status === STATUS_DISABLED) {
     return null;
   }
 
   const path = cleanPath(item.path, `/adminnet/${item.id ?? item.name}`);
   const children = (item.children ?? [])
-    .map((child) => toRoute(child))
+    .map((child) => toRoute(child, localPageComponents))
     .filter(Boolean) as RouteRecordStringComponent[];
   const title = item.meta?.title || item.name || path;
   const externalLink = normalizeExternalLink(item.meta?.isLink);
 
   return {
     children: sortRoutes(children),
-    component: normalizeComponent(item.component),
+    component: normalizeComponent(item.component, localPageComponents),
     meta: {
       affixTab: item.meta?.isAffix,
       hideInMenu: item.meta?.isHide,
@@ -234,10 +243,11 @@ function toRoute(item: AdminNetMenuItem): null | RouteRecordStringComponent {
 
 export function mapAdminNetMenusToVbenRoutes(
   menus: AdminNetMenuItem[] = [],
+  localPageComponents?: ReadonlySet<string>,
 ): RouteRecordStringComponent[] {
   return sortRoutes(
     menus
-      .map((item) => toRoute(item))
+      .map((item) => toRoute(item, localPageComponents))
       .filter(Boolean) as RouteRecordStringComponent[],
   );
 }
