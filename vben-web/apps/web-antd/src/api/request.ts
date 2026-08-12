@@ -22,6 +22,13 @@ import {
 
 const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
 
+export function shouldReauthenticateForResponse(
+  url: string | undefined,
+  invalid: boolean,
+) {
+  return invalid && !url?.includes('/sysAuth/logout');
+}
+
 function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   const client = new RequestClient({
     ...options,
@@ -66,7 +73,10 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     fulfilled: (response) => {
       const accessStore = useAccessStore();
       const tokens = syncAdminNetTokensFromHeaders(response.headers);
-      if (tokens.invalid) {
+      // Logout deliberately returns the invalid-token header. It must clear the
+      // current session only, not schedule a second logout that can race with
+      // the next successful login and erase its new token.
+      if (shouldReauthenticateForResponse(response.config.url, tokens.invalid)) {
         void doReAuthenticate();
       } else if (tokens.accessToken) {
         accessStore.setAccessToken(tokens.accessToken);
