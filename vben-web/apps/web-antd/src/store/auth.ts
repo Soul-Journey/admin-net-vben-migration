@@ -19,11 +19,13 @@ import {
   logoutApi,
 } from '#/api';
 import { $t } from '#/locales';
-import { routes } from '#/router/routes';
+import { accessRoutes, routes } from '#/router/routes';
 import {
   clearAdminNetTokens,
   persistAdminNetTokens,
 } from '#/utils/adminnet/token';
+
+import { generateAccess } from '../router/access';
 
 export const useAuthStore = defineStore('auth', () => {
   const accessStore = useAccessStore();
@@ -39,6 +41,21 @@ export const useAuthStore = defineStore('auth', () => {
   async function goHome(homePath?: string) {
     const target = homePath || preferences.app.defaultHomePath;
     await router.replace(target);
+  }
+
+  async function initializeAccessRoutes(userInfo: UserInfo) {
+    resetDynamicRoutes();
+    accessStore.setIsAccessChecked(false);
+
+    const { accessibleMenus, accessibleRoutes } = await generateAccess({
+      roles: userInfo.roles ?? [],
+      router,
+      routes: accessRoutes,
+    });
+
+    accessStore.setAccessMenus(accessibleMenus);
+    accessStore.setAccessRoutes(accessibleRoutes);
+    accessStore.setIsAccessChecked(true);
   }
 
   async function completeLogin(
@@ -65,11 +82,9 @@ export const useAuthStore = defineStore('auth', () => {
     accessStore.setAccessCodes(accessCodes);
 
     accessStore.setLoginExpired(false);
-    // A prior logout can leave dynamically-added backend routes in the router.
-    // Reset them so the first post-login navigation always rebuilds the current
-    // user's menu and routes through the access guard.
-    resetDynamicRoutes();
-    accessStore.setIsAccessChecked(false);
+    // Build the current user's backend routes before leaving the login page.
+    // This avoids relying on a second navigation guard pass after logout.
+    await initializeAccessRoutes(userInfo);
 
     await (onSuccess ? onSuccess() : goHome(userInfo.homePath));
 
@@ -88,6 +103,7 @@ export const useAuthStore = defineStore('auth', () => {
     params: Recordable<any>,
     onSuccess?: () => Promise<void> | void,
   ) {
+    if (loginLoading.value) return;
     try {
       loginLoading.value = true;
       return await completeLogin(await loginApi(params), onSuccess);
@@ -100,6 +116,7 @@ export const useAuthStore = defineStore('auth', () => {
     params: Recordable<any>,
     onSuccess?: () => Promise<void> | void,
   ) {
+    if (loginLoading.value) return;
     try {
       loginLoading.value = true;
       return await completeLogin(await loginPhoneApi(params), onSuccess);
