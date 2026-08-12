@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router';
 import { LOGIN_PATH } from '@vben/constants';
 import { preferences } from '@vben/preferences';
 import { resetAllStores, useAccessStore, useUserStore } from '@vben/stores';
+import { resetStaticRoutes } from '@vben/utils';
 
 import { notification } from 'ant-design-vue';
 import { defineStore } from 'pinia';
@@ -18,6 +19,7 @@ import {
   logoutApi,
 } from '#/api';
 import { $t } from '#/locales';
+import { routes } from '#/router/routes';
 import {
   clearAdminNetTokens,
   persistAdminNetTokens,
@@ -29,6 +31,10 @@ export const useAuthStore = defineStore('auth', () => {
   const router = useRouter();
 
   const loginLoading = ref(false);
+
+  function resetDynamicRoutes() {
+    resetStaticRoutes(router, routes);
+  }
 
   async function goHome(homePath?: string) {
     const target = homePath || preferences.app.defaultHomePath;
@@ -59,6 +65,11 @@ export const useAuthStore = defineStore('auth', () => {
     accessStore.setAccessCodes(accessCodes);
 
     accessStore.setLoginExpired(false);
+    // A prior logout can leave dynamically-added backend routes in the router.
+    // Reset them so the first post-login navigation always rebuilds the current
+    // user's menu and routes through the access guard.
+    resetDynamicRoutes();
+    accessStore.setIsAccessChecked(false);
 
     await (onSuccess ? onSuccess() : goHome(userInfo.homePath));
 
@@ -104,6 +115,9 @@ export const useAuthStore = defineStore('auth', () => {
       // Ignore server-side logout errors and always clear local auth state.
     }
 
+    // Dynamic routes are not Pinia state. Remove them before clearing stores so
+    // the next login cannot reuse a previous user's route records.
+    resetDynamicRoutes();
     resetAllStores();
     clearAdminNetTokens();
     accessStore.setLoginExpired(false);
