@@ -4,7 +4,7 @@
   "EventBus": {
     "RabbitMQ": {
       "UserName": "adminnet",
-      "Password": "adminnet++123456",
+      "Password": "",
       "HostName": "127.0.0.1",
       "Port": 5672
     }

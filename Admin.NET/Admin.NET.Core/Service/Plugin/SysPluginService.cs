@@ -33,6 +33,7 @@ public class SysPluginService : IDynamicApiController, ITransient
     [DisplayName("获取动态插件列表")]
     public async Task<SqlSugarPagedList<SysPlugin>> Page(PagePluginInput input)
     {
+        EnsureSuperAdmin();
         return await _sysPluginRep.AsQueryable()
             .WhereIF(_userManager.SuperAdmin && input.TenantId > 0, u => u.TenantId == input.TenantId)
             .WhereIF(!string.IsNullOrWhiteSpace(input.Name), u => u.Name.Contains(input.Name))
@@ -49,11 +50,12 @@ public class SysPluginService : IDynamicApiController, ITransient
     [DisplayName("增加动态插件")]
     public async Task AddPlugin(AddPluginInput input)
     {
+        EnsureSuperAdmin();
         var isExist = await _sysPluginRep.IsAnyAsync(u => u.Name == input.Name || u.AssemblyName == input.AssemblyName);
         if (isExist) throw Oops.Oh(ErrorCodeEnum.D1900);
 
         // 添加动态程序集/接口
-        input.AssemblyName = CompileAssembly(input.CsharpCode, input.AssemblyName);
+        input.AssemblyName = LoadAssembly(input.CsharpCode, input.AssemblyName);
 
         await _sysPluginRep.InsertAsync(input.Adapt<SysPlugin>());
     }
@@ -67,12 +69,19 @@ public class SysPluginService : IDynamicApiController, ITransient
     [DisplayName("更新动态插件")]
     public async Task UpdatePlugin(UpdatePluginInput input)
     {
-        var isExist = await _sysPluginRep.IsAnyAsync(u => (u.Name == input.Name || u.AssemblyName == input.AssemblyName) && u.Id != input.Id);
+        EnsureSuperAdmin();
+        var plugin = await _sysPluginRep.GetByIdAsync(input.Id);
+        if (plugin == null) throw Oops.Oh("动态插件不存在");
+
+        var isExist = await _sysPluginRep.IsAnyAsync(u => u.Name == input.Name && u.Id != input.Id);
         if (isExist) throw Oops.Oh(ErrorCodeEnum.D1900);
 
-        // 先移除再添加动态程序集/接口
-        RemoveAssembly(input.AssemblyName);
-        input.AssemblyName = CompileAssembly(input.CsharpCode);
+        // Compile before unloading the active assembly so invalid source cannot
+        // take the existing plugin offline.
+        var replacementAssembly = CompileAssembly(input.CsharpCode, plugin.AssemblyName);
+        RemoveAssembly(plugin.AssemblyName);
+        _provider.AddAssembliesWithNotifyChanges(replacementAssembly);
+        input.AssemblyName = replacementAssembly.GetName().Name;
 
         await _sysPluginRep.AsUpdateable(input.Adapt<SysPlugin>()).IgnoreColumns(true).ExecuteCommandAsync();
     }
@@ -86,6 +95,7 @@ public class SysPluginService : IDynamicApiController, ITransient
     [DisplayName("删除动态插件")]
     public async Task DeletePlugin(DeletePluginInput input)
     {
+        EnsureSuperAdmin();
         var plugin = await _sysPluginRep.GetByIdAsync(input.Id);
         if (plugin == null) return;
 
@@ -96,31 +106,34 @@ public class SysPluginService : IDynamicApiController, ITransient
     }
 
     /// <summary>
-    /// 添加动态程序集/接口 🧩
+    /// 编译动态程序集
     /// </summary>
     /// <param name="csharpCode"></param>
     /// <param name="assemblyName">程序集名称</param>
     /// <returns></returns>
-    [DisplayName("添加动态程序集/接口")]
-    public string CompileAssembly([FromBody] string csharpCode, [FromQuery] string assemblyName = default)
+    private static System.Reflection.Assembly CompileAssembly(string csharpCode, string assemblyName = default)
     {
-        // 编译 C# 代码并返回动态程序集
-        var dynamicAssembly = App.CompileCSharpClassCode(csharpCode, assemblyName);
+        return App.CompileCSharpClassCode(csharpCode, assemblyName);
+    }
 
-        // 将程序集添加进动态 WebAPI 应用部件
+    private string LoadAssembly(string csharpCode, string assemblyName = default)
+    {
+        var dynamicAssembly = CompileAssembly(csharpCode, assemblyName);
         _provider.AddAssembliesWithNotifyChanges(dynamicAssembly);
-
-        // 返回动态程序集名称
         return dynamicAssembly.GetName().Name;
     }
 
     /// <summary>
     /// 移除动态程序集/接口 🧩
     /// </summary>
-    [ApiDescriptionSettings(Name = "RemoveAssembly"), HttpPost]
-    [DisplayName("移除动态程序集/接口")]
-    public void RemoveAssembly(string assemblyName)
+    private void RemoveAssembly(string assemblyName)
     {
         _provider.RemoveAssembliesWithNotifyChanges(assemblyName);
+    }
+
+    private void EnsureSuperAdmin()
+    {
+        if (!_userManager.SuperAdmin)
+            throw Oops.Oh("动态插件仅允许超级管理员维护");
     }
 }

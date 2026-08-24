@@ -29,7 +29,8 @@ export namespace AuthApi {
 
 function encryptPassword(password: string) {
   const publicKey = import.meta.env.VITE_SM_PUBLIC_KEY;
-  return publicKey ? sm2.doEncrypt(password, publicKey, 1) : password;
+  if (!publicKey) throw new Error('密码加密公钥未配置，已阻止明文登录');
+  return sm2.doEncrypt(password, publicKey, 1);
 }
 
 function normalizeLoginParams(data: AuthApi.LoginParams): AdminNetLoginParams {

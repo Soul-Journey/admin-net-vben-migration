@@ -36,7 +36,8 @@ async function bootstrap(namespace: string) {
 
   // 注册v-loading指令
   registerLoadingDirective(app, {
-    loading: 'loading', // 在这里可以自定义指令名称，也可以明确提供false表示不注册这个指令
+    // VForm 3 会按需注册 Element Plus 的 v-loading；避免进入表单设计器时重复注册。
+    loading: false,
     spinning: 'spinning',
   });
 

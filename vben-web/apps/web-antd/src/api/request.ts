@@ -25,8 +25,17 @@ const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
 export function shouldReauthenticateForResponse(
   url: string | undefined,
   invalid: boolean,
+  requestToken?: null | string,
+  currentToken?: null | string,
 ) {
-  return invalid && !url?.includes('/sysAuth/logout');
+  if (!invalid || url?.includes('/sysAuth/logout')) return false;
+  return !requestToken || !currentToken || requestToken === currentToken;
+}
+
+function readBearerToken(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const match = /^Bearer\s+(.+)$/i.exec(value.trim());
+  return match?.[1] ?? null;
 }
 
 function createRequestClient(baseURL: string, options?: RequestClientOptions) {
@@ -35,19 +44,26 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     baseURL,
     timeout: 50_000,
   });
+  let reauthenticationPromise: null | Promise<void> = null;
 
   async function doReAuthenticate() {
-    const accessStore = useAccessStore();
-    const authStore = useAuthStore();
-    accessStore.setAccessToken(null);
-    if (
-      preferences.app.loginExpiredMode === 'modal' &&
-      accessStore.isAccessChecked
-    ) {
-      accessStore.setLoginExpired(true);
-    } else {
-      await authStore.logout();
-    }
+    if (reauthenticationPromise) return reauthenticationPromise;
+    reauthenticationPromise = (async () => {
+      const accessStore = useAccessStore();
+      const authStore = useAuthStore();
+      accessStore.setAccessToken(null);
+      if (
+        preferences.app.loginExpiredMode === 'modal' &&
+        accessStore.isAccessChecked
+      ) {
+        accessStore.setLoginExpired(true);
+      } else {
+        await authStore.logout();
+      }
+    })().finally(() => {
+      reauthenticationPromise = null;
+    });
+    return reauthenticationPromise;
   }
 
   function formatToken(token: null | string) {
@@ -76,7 +92,19 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
       // Logout deliberately returns the invalid-token header. It must clear the
       // current session only, not schedule a second logout that can race with
       // the next successful login and erase its new token.
-      if (shouldReauthenticateForResponse(response.config.url, tokens.invalid)) {
+      const requestToken = readBearerToken(
+        response.config.headers?.Authorization,
+      );
+      const currentToken =
+        accessStore.accessToken || getStoredAccessToken();
+      if (
+        shouldReauthenticateForResponse(
+          response.config.url,
+          tokens.invalid,
+          requestToken,
+          currentToken,
+        )
+      ) {
         void doReAuthenticate();
       } else if (tokens.accessToken) {
         accessStore.setAccessToken(tokens.accessToken);
@@ -96,7 +124,22 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   client.addResponseInterceptor({
     rejected: async (error) => {
       if (error?.response?.status === 401 || error?.code === 401) {
-        await doReAuthenticate();
+        const requestToken = readBearerToken(
+          error?.config?.headers?.Authorization,
+        );
+        const accessStore = useAccessStore();
+        const currentToken =
+          accessStore.accessToken || getStoredAccessToken();
+        if (
+          shouldReauthenticateForResponse(
+            error?.config?.url,
+            true,
+            requestToken,
+            currentToken,
+          )
+        ) {
+          await doReAuthenticate();
+        }
       }
       throw error;
     },

@@ -52,6 +52,7 @@ public class SysAuthService : IDynamicApiController, ITransient
         _sysMenuService = sysMenuService;
         _sysCacheService = sysCacheService;
         _sysConfigService = sysConfigService;
+        _sysLdapService = sysLdapService;
         _httpContextAccessor = httpContextAccessor;
         _sysOnlineUserService = sysOnlineUserService;
     }

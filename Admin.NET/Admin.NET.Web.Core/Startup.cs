@@ -37,6 +37,11 @@ public class Startup : AppStartup
 {
     public void ConfigureServices(IServiceCollection services)
     {
+        var databaseConnection = Environment.GetEnvironmentVariable(
+            "DbConnection__ConnectionConfigs__0__ConnectionString");
+        if (!string.IsNullOrWhiteSpace(databaseConnection))
+            App.Configuration["DbConnection:ConnectionConfigs:0:ConnectionString"] = databaseConnection;
+
         // 配置选项
         services.AddProjectOptions();
 

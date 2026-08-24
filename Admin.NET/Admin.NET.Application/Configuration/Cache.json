@@ -27,7 +27,7 @@
         // "10.10.0.124:26380"
       ],
       "MainPrefix": "adminNet:",
-      "Password": "123456",
+      "Password": "",
       "SentinelPassword": "adminNet",
       "ServiceName": "adminNet",
       "SignalRChannelPrefix": "signalR:"

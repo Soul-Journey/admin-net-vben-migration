@@ -69,9 +69,10 @@ public class JwtHandler : AppAuthorizeHandler
     /// <returns></returns>
     private static async Task<bool> CheckAuthorizeAsync(DefaultHttpContext httpContext)
     {
-        // 登录模式判断PC、APP
+        // APP tokens belong to WeChat/application users and must never bypass
+        // the management API permission system.
         if (App.User.FindFirst(ClaimConst.LoginMode)?.Value == ((int)LoginModeEnum.APP).ToString())
-            return true;
+            return IsAppApiRouteAllowed(httpContext.Request.Path);
 
         // 排除超管
         if (App.User.FindFirst(ClaimConst.AccountType)?.Value == ((int)AccountTypeEnum.SuperAdmin).ToString())
@@ -90,5 +91,14 @@ public class JwtHandler : AppAuthorizeHandler
         // 获取系统所有按钮权限集合
         var allBtnPermList = await SysMenuService.GetAllBtnPermList();
         return allBtnPermList.TrueForAll(u => !routeName.Equals(u, StringComparison.CurrentCultureIgnoreCase));
+    }
+
+    public static bool IsAppApiRouteAllowed(PathString path)
+    {
+        // The current WeChat user endpoints are explicitly anonymous. No
+        // protected management endpoint is permitted for an APP token until a
+        // dedicated application authorization policy is introduced.
+        _ = path;
+        return false;
     }
 }

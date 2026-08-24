@@ -23,7 +23,7 @@
     "Enabled": false,
     "Host": "127.0.0.1",
     "Port": 8222,
-    "Username": "sshuser",
-    "Password": "Password.1"
+    "Username": "",
+    "Password": ""
   }
 }

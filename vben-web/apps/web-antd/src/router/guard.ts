@@ -7,6 +7,7 @@ import { startProgress, stopProgress } from '@vben/utils';
 
 import { accessRoutes, coreRouteNames } from '#/router/routes';
 import { useAuthStore } from '#/store';
+import { resolveAccessibleHomePath } from '#/utils/adminnet/home-route';
 
 import { generateAccess } from './access';
 
@@ -75,9 +76,16 @@ function setupAccessGuard(router: Router) {
     accessStore.setAccessRoutes(accessibleRoutes);
     accessStore.setIsAccessChecked(true);
 
+    const homePath = resolveAccessibleHomePath(
+      accessibleMenus,
+      userInfo.homePath,
+    );
+    userInfo.homePath = homePath;
+    userStore.setUserInfo(userInfo);
+
     const redirectPath =
       to.path === preferences.app.defaultHomePath
-        ? userInfo.homePath || preferences.app.defaultHomePath
+        ? homePath
         : to.fullPath;
 
     return {

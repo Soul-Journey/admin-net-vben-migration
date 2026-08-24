@@ -20,6 +20,7 @@ import {
 } from '#/api';
 import { $t } from '#/locales';
 import { accessRoutes, routes } from '#/router/routes';
+import { resolveAccessibleHomePath } from '#/utils/adminnet/home-route';
 import {
   clearAdminNetTokens,
   persistAdminNetTokens,
@@ -56,6 +57,14 @@ export const useAuthStore = defineStore('auth', () => {
     accessStore.setAccessMenus(accessibleMenus);
     accessStore.setAccessRoutes(accessibleRoutes);
     accessStore.setIsAccessChecked(true);
+
+    const homePath = resolveAccessibleHomePath(
+      accessibleMenus,
+      userInfo.homePath,
+    );
+    userInfo.homePath = homePath;
+    userStore.setUserInfo(userInfo);
+    return homePath;
   }
 
   async function completeLogin(
@@ -84,9 +93,9 @@ export const useAuthStore = defineStore('auth', () => {
     accessStore.setLoginExpired(false);
     // Build the current user's backend routes before leaving the login page.
     // This avoids relying on a second navigation guard pass after logout.
-    await initializeAccessRoutes(userInfo);
+    const homePath = await initializeAccessRoutes(userInfo);
 
-    await (onSuccess ? onSuccess() : goHome(userInfo.homePath));
+    await (onSuccess ? onSuccess() : goHome(homePath));
 
     if (userInfo.realName) {
       notification.success({
@@ -139,9 +148,14 @@ export const useAuthStore = defineStore('auth', () => {
     clearAdminNetTokens();
     accessStore.setLoginExpired(false);
 
+    const currentPath = router.currentRoute.value.fullPath;
+    const preserveRedirect =
+      redirect &&
+      !currentPath.startsWith(LOGIN_PATH) &&
+      !currentPath.startsWith('/auth/');
     await router.replace({
       path: LOGIN_PATH,
-      query: redirect ? {} : {},
+      query: preserveRedirect ? { redirect: currentPath } : {},
     });
   }
 

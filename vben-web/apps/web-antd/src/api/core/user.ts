@@ -18,7 +18,9 @@ function mapAdminNetUserInfo(raw: AdminNetUserInfoRaw): AdminNetUserInfo {
     avatar: raw.avatar || '/upload/logo.png',
     desc: raw.introduction ?? raw.signature ?? '',
     email: raw.email ?? '',
-    homePath: '/dashboard/home',
+    // Admin.NET does not return a personal home page. It is selected from the
+    // routes actually granted to the current account after menus are loaded.
+    homePath: '',
     orgId: raw.orgId,
     orgName: raw.orgName ?? '',
     phone: raw.phone ?? '',

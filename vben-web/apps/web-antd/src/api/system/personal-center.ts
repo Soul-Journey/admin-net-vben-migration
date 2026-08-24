@@ -111,8 +111,8 @@ export function changePersonalPasswordApi(
   passwordNew: string,
 ) {
   const publicKey = import.meta.env.VITE_SM_PUBLIC_KEY;
-  const encrypt = (value: string) =>
-    publicKey ? sm2.doEncrypt(value, publicKey, 1) : value;
+  if (!publicKey) throw new Error('密码加密公钥未配置，已阻止明文提交');
+  const encrypt = (value: string) => sm2.doEncrypt(value, publicKey, 1);
   return requestClient.post<number>('/sysUser/changePwd', {
     passwordNew: encrypt(passwordNew),
     passwordOld: encrypt(passwordOld),

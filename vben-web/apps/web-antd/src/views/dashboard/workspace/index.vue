@@ -4,6 +4,7 @@ import type { ReceivedNoticeRecord, SysOrg } from '#/api';
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
+import { useAccess } from '@vben/access';
 import { IconifyIcon } from '@vben/icons';
 import { preferences } from '@vben/preferences';
 import { useUserStore } from '@vben/stores';
@@ -21,9 +22,17 @@ import {
 defineOptions({ name: 'AdminNetWorkspace' });
 
 type MetricKey = 'online' | 'orgs' | 'roles' | 'users';
+interface MetricCard {
+  color: string;
+  icon: string;
+  key: MetricKey;
+  label: string;
+  value?: number;
+}
 
 const router = useRouter();
 const userStore = useUserStore();
+const { hasAccessByCodes } = useAccess();
 const loading = ref(false);
 const lastUpdated = ref('');
 const notices = ref<ReceivedNoticeRecord[]>([]);
@@ -37,6 +46,14 @@ const metrics = ref<Record<MetricKey, number | undefined>>({
 const userInfo = computed(
   () => userStore.userInfo as null | Record<string, any>,
 );
+const accountType = computed(() => Number(userInfo.value?.accountType));
+const isSystemAdmin = computed(() => [888, 999].includes(accountType.value));
+const canViewUsers = computed(() => hasAccessByCodes(['sysUser:page']));
+const canViewRoles = computed(() => hasAccessByCodes(['sysRole:page']));
+const canViewOrgs = computed(() => hasAccessByCodes(['sysOrg:list']));
+const canViewNotices = computed(() =>
+  router.getRoutes().some((route) => route.path === '/dashboard/notice'),
+);
 const greeting = computed(() => {
   const hour = new Date().getHours();
   if (hour < 6) return '夜深了';
@@ -48,36 +65,46 @@ const unreadCount = computed(
   () => notices.value.filter((item) => item.readStatus === 0).length,
 );
 
-const metricCards = computed(() => [
-  {
-    color: 'blue',
-    icon: 'lucide:users',
-    key: 'users' as const,
-    label: '账号总数',
-    value: metrics.value.users,
-  },
-  {
-    color: 'green',
-    icon: 'lucide:shield-check',
-    key: 'roles' as const,
-    label: '角色总数',
-    value: metrics.value.roles,
-  },
-  {
-    color: 'amber',
-    icon: 'lucide:building-2',
-    key: 'orgs' as const,
-    label: '机构节点',
-    value: metrics.value.orgs,
-  },
-  {
-    color: 'red',
-    icon: 'lucide:radio-tower',
-    key: 'online' as const,
-    label: '在线连接',
-    value: metrics.value.online,
-  },
-]);
+const metricCards = computed<MetricCard[]>(() => {
+  const cards: MetricCard[] = [];
+  if (canViewUsers.value) {
+    cards.push({
+      color: 'blue',
+      icon: 'lucide:users',
+      key: 'users',
+      label: '账号总数',
+      value: metrics.value.users,
+    });
+  }
+  if (canViewRoles.value) {
+    cards.push({
+      color: 'green',
+      icon: 'lucide:shield-check',
+      key: 'roles',
+      label: '角色总数',
+      value: metrics.value.roles,
+    });
+  }
+  if (canViewOrgs.value) {
+    cards.push({
+      color: 'amber',
+      icon: 'lucide:building-2',
+      key: 'orgs',
+      label: '机构节点',
+      value: metrics.value.orgs,
+    });
+  }
+  if (isSystemAdmin.value) {
+    cards.push({
+      color: 'red',
+      icon: 'lucide:radio-tower',
+      key: 'online',
+      label: '在线连接',
+      value: metrics.value.online,
+    });
+  }
+  return cards;
+});
 
 const quickActions = [
   {
@@ -141,20 +168,32 @@ function formatTime(value?: string) {
 async function loadWorkspace() {
   loading.value = true;
   const [users, roles, orgs, online, received] = await Promise.allSettled([
-    pageUsersApi({ orgId: -1, page: 1, pageSize: 1 }),
-    pageRolesApi({ page: 1, pageSize: 1 }),
-    getOrgListApi(),
-    pageOnlineUsersApi({ page: 1, pageSize: 1 }),
-    pageReceivedNoticesApi({ page: 1, pageSize: 5 }),
+    canViewUsers.value
+      ? pageUsersApi({ orgId: -1, page: 1, pageSize: 1 })
+      : Promise.resolve(undefined),
+    canViewRoles.value
+      ? pageRolesApi({ page: 1, pageSize: 1 })
+      : Promise.resolve(undefined),
+    canViewOrgs.value ? getOrgListApi() : Promise.resolve(undefined),
+    isSystemAdmin.value
+      ? pageOnlineUsersApi({ page: 1, pageSize: 1 })
+      : Promise.resolve(undefined),
+    canViewNotices.value
+      ? pageReceivedNoticesApi({ page: 1, pageSize: 5 })
+      : Promise.resolve(undefined),
   ]);
 
   metrics.value = {
-    online: online.status === 'fulfilled' ? online.value.total : undefined,
-    orgs: orgs.status === 'fulfilled' ? countOrgNodes(orgs.value) : undefined,
-    roles: roles.status === 'fulfilled' ? roles.value.total : undefined,
-    users: users.status === 'fulfilled' ? users.value.total : undefined,
+    online: online.status === 'fulfilled' ? online.value?.total : undefined,
+    orgs:
+      orgs.status === 'fulfilled' && orgs.value
+        ? countOrgNodes(orgs.value)
+        : undefined,
+    roles: roles.status === 'fulfilled' ? roles.value?.total : undefined,
+    users: users.status === 'fulfilled' ? users.value?.total : undefined,
   };
-  notices.value = received.status === 'fulfilled' ? received.value.items : [];
+  notices.value =
+    received.status === 'fulfilled' ? (received.value?.items ?? []) : [];
   lastUpdated.value = new Date().toLocaleTimeString('zh-CN', {
     hour12: false,
     hour: '2-digit',
@@ -197,7 +236,11 @@ onMounted(loadWorkspace);
       </Button>
     </header>
 
-    <section class="metric-strip" aria-label="系统概览">
+    <section
+      v-if="metricCards.length > 0"
+      class="metric-strip"
+      aria-label="系统概览"
+    >
       <div v-for="item in metricCards" :key="item.key" class="metric-item">
         <span class="metric-icon" :class="`is-${item.color}`">
           <IconifyIcon :icon="item.icon" />
@@ -262,7 +305,10 @@ onMounted(loadWorkspace);
         </dl>
       </section>
 
-      <section class="workspace-section notice-section">
+      <section
+        v-if="canViewNotices"
+        class="workspace-section notice-section"
+      >
         <div class="section-heading">
           <div class="notice-title">
             <h2>最新站内信</h2>

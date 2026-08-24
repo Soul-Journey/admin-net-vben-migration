@@ -64,33 +64,18 @@ const coreRoutes: RouteRecordRaw[] = [
           title: $t('page.auth.codeLogin'),
         },
       },
-      {
-        name: 'QrCodeLogin',
-        path: 'qrcode-login',
-        component: () =>
-          import('#/views/_core/authentication/qrcode-login.vue'),
-        meta: {
-          title: $t('page.auth.qrcodeLogin'),
-        },
-      },
-      {
-        name: 'ForgetPassword',
-        path: 'forget-password',
-        component: () =>
-          import('#/views/_core/authentication/forget-password.vue'),
-        meta: {
-          title: $t('page.auth.forgetPassword'),
-        },
-      },
-      {
-        name: 'Register',
-        path: 'register',
-        component: () => import('#/views/_core/authentication/register.vue'),
-        meta: {
-          title: $t('page.auth.register'),
-        },
-      },
     ],
+  },
+  {
+    component: () => import('#/views/_core/fallback/forbidden.vue'),
+    meta: {
+      hideInBreadcrumb: true,
+      hideInMenu: true,
+      hideInTab: true,
+      title: '暂无可用菜单',
+    },
+    name: 'NoAccessibleMenu',
+    path: '/no-access',
   },
 ];
 

@@ -24,7 +24,7 @@
       "Enabled": false, // 启用ES日志
       "AuthType": "Basic", // ES认证类型，可选 Basic、ApiKey、Base64ApiKey
       "User": "admin", // Basic认证的用户名，使用Basic认证类型时必填
-      "Password": "123456", // Basic认证的密码，使用Basic认证类型时必填
+      "Password": "", // Basic认证的密码，启用 Basic 认证时通过环境变量注入
       "ApiId": "", // 使用ApiKey认证类型时必填
       "ApiKey": "", // 使用ApiKey认证类型时必填
       "Base64ApiKey": "TmtrOEszNEJuQ0NyaWlydGtROFk6SG1RZ0w3YzBTc2lCanJTYlV3aXNzZw==", // 使用Base64ApiKey认证类型时必填

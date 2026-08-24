@@ -12,4 +12,26 @@ describe('Admin.NET authentication response handling', () => {
       shouldReauthenticateForResponse('/sysMenu/loginMenuTree', true),
     ).toBe(true);
   });
+
+  it('ignores a delayed invalid response from the previous login session', () => {
+    expect(
+      shouldReauthenticateForResponse(
+        '/sysMenu/loginMenuTree',
+        true,
+        'old-token',
+        'new-token',
+      ),
+    ).toBe(false);
+  });
+
+  it('reauthenticates when the failed request belongs to the current session', () => {
+    expect(
+      shouldReauthenticateForResponse(
+        '/sysMenu/loginMenuTree',
+        true,
+        'current-token',
+        'current-token',
+      ),
+    ).toBe(true);
+  });
 });
