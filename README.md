@@ -10,6 +10,22 @@
   [![License](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-yellow)](#开源与致谢)
 </div>
 
+![工作台全景：左侧导航、系统概览、常用功能、当前会话与最新站内信](./doc/screenshots/workspace.png)
+
+## 界面预览
+
+点击缩略图可查看原图。
+
+| 机构管理 · 按机构树浏览组织层级 | 角色管理 · 查看角色与数据范围 |
+| --- | --- |
+| [![机构管理页面](./doc/screenshots/organizations.png)](./doc/screenshots/organizations.png) | [![角色管理页面](./doc/screenshots/roles.png)](./doc/screenshots/roles.png) |
+| **添加账号 · 基础信息、角色授权与档案** | **新增角色 · 角色设置与菜单权限树** |
+| [![添加账号弹窗](./doc/screenshots/account-dialog.png)](./doc/screenshots/account-dialog.png) | [![新增角色弹窗](./doc/screenshots/role-dialog.png)](./doc/screenshots/role-dialog.png) |
+| **菜单管理 · 目录、路由与组件路径** | **字典管理 · 字典类型与对应的字典值** |
+| [![菜单管理页面](./doc/screenshots/menus.png)](./doc/screenshots/menus.png) | [![字典管理双栏页面](./doc/screenshots/dictionaries.png)](./doc/screenshots/dictionaries.png) |
+| **任务调度 · 作业与触发器** | **登录 · 账号登录与手机登录入口** |
+| [![任务调度页面](./doc/screenshots/jobs.png)](./doc/screenshots/jobs.png) | [![账号登录页面](./doc/screenshots/login.png)](./doc/screenshots/login.png) |
+
 ## 项目介绍
 
 本项目在 [Admin.NET](https://github.com/zuohuaijun/Admin.NET) 后端基础上，使用 [Vben Admin 5](https://github.com/vbenjs/vue-vben-admin) 的 `web-antd` 应用重建管理端 UI。
@@ -17,25 +33,6 @@
 它不是简单更换颜色或组件库，而是重新适配了登录鉴权、动态菜单、按钮权限、多租户、请求协议和主要业务页面，并保留旧版 Element Plus Web 作为只读功能对照。
 
 > 这是社区维护的迁移与翻新项目，不是 Admin.NET 官方发行版。
-
-## 界面预览
-
-**字典管理**　选择左侧的字典，右侧会列出对应的显示文本、字典值和编码。图中以账号类型为例。
-
-![Vben 字典管理双栏界面，右侧列出会员、普通账号、系统管理员和超级管理员](./doc/screenshots/dictionaries.png)
-
-<details>
-<summary>查看菜单管理与登录界面</summary>
-
-**菜单管理**　展开目录即可查看下属菜单的路由、组件路径和权限标识。
-
-![Vben 菜单管理界面，树形表格展示工作台和系统管理目录下的菜单](./doc/screenshots/menus.png)
-
-**登录**　账号登录页提供滑块验证、记住账号和手机号登录入口。
-
-![Admin.NET Vben 登录界面](./doc/screenshots/login.png)
-
-</details>
 
 ## 为什么做这个项目
 
