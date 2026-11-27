@@ -18,6 +18,25 @@
 
 > 这是社区维护的迁移与翻新项目，不是 Admin.NET 官方发行版。
 
+## 界面预览
+
+**字典管理**　选择左侧的字典，右侧会列出对应的显示文本、字典值和编码。图中以账号类型为例。
+
+![Vben 字典管理双栏界面，右侧列出会员、普通账号、系统管理员和超级管理员](./doc/screenshots/dictionaries.png)
+
+<details>
+<summary>查看菜单管理与登录界面</summary>
+
+**菜单管理**　展开目录即可查看下属菜单的路由、组件路径和权限标识。
+
+![Vben 菜单管理界面，树形表格展示工作台和系统管理目录下的菜单](./doc/screenshots/menus.png)
+
+**登录**　账号登录页提供滑块验证、记住账号和手机号登录入口。
+
+![Admin.NET Vben 登录界面](./doc/screenshots/login.png)
+
+</details>
+
 ## 为什么做这个项目
 
 - 使用 Vben 5 + Ant Design Vue 构建更清爽、高密度、适合长期操作的后台界面。
